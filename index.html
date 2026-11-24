@@ -128,11 +128,13 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
       <p class="small muted">Si eres de RH, elige tu nombre en la pestaña Checar y vuelve aquí: te pedirá tu PIN.</p>
     </div>
     <div class="card hidden" id="histContent">
-      <h2>Registros de este dispositivo</h2>
-      <p class="small muted" style="margin:0 0 10px">Los registros se guardan en este dispositivo y se conservan al cerrar la app. Descarga el respaldo en CSV de vez en cuando para tenerlos fuera del celular.</p>
+      <h2>Historial de registros</h2>
+      <p class="small muted" style="margin:0 0 10px">Los registros de todos los empleados se guardan en la hoja central de RH. Las fotos quedan solo en el celular que registró, no se suben a la hoja.</p>
+      <p class="small" id="histCentralNote" style="margin:0 0 10px"></p>
       <div id="histEmpty" class="muted">Todavía no hay registros en este dispositivo.</div>
       <div style="overflow-x:auto"><table id="histTable" class="hidden"><thead><tr><th>Empleado</th><th>Tipo</th><th>Fecha y hora</th><th>Ubicación</th><th>Origen</th><th>Foto</th></tr></thead><tbody id="histBody"></tbody></table></div>
       <div class="row" style="margin-top:14px">
+        <button class="btn-out" style="flex:1" onclick="fetchCentralHistory()">Actualizar</button>
         <button class="btn-out" style="flex:1" onclick="downloadCSV()">Descargar respaldo (CSV)</button>
         <button class="btn-out" style="flex:1" onclick="lockAdmin()">Bloquear vista RH</button>
       </div>
@@ -218,6 +220,16 @@ var gpsStartedAt = 0, gpsTick = null, gpsElapsedTimer = null;
 var pendingType = null, photoDataUrl = null;
 var officeIPs = []; // IPs públicas de la oficina guardadas (la IP cambia) — solo respaldo, nunca bloquea
 var currentIP = null;
+
+/* ---------- Historial central (Google Sheets, solo RH) ---------- */
+/* Cada registro se envía a la hoja "Checador Equimar - Registros". El
+   Historial de RH lee de ahí los registros de TODOS los empleados; los
+   empleados normales nunca hacen esta lectura. La foto NO se sube: queda
+   solo en el celular que registró. */
+var SHEETS_URL = "https://script.google.com/macros/s/AKfycbxoWnLudZJ49aKRg5WxC-sdhdd3QZ8PPkmjeLZNZ-HdGEOd0PTpi00OTuThS5fcqJep/exec";
+var SHEETS_KEY = "checador-RH-2026-x7k9";
+var centralRows = null; // filas centrales de Sheets (null = aún no cargadas)
+var centralFailed = false; // true si el último intento de lectura falló
 
 /* ---------- Persistencia: todo queda guardado en este dispositivo ---------- */
 /* localStorage sobrevive a cerrar la app. Si no está disponible (modo privado,
@@ -620,13 +632,45 @@ function showToast(msg, ok){
 }
 function saveRecord(type, st){
   var now = new Date();
-  records.unshift({
+  var rec = {
+    id: "r" + now.getTime().toString(36) + Math.random().toString(36).slice(2, 8),
     name: currentEmployee(), type: type, when: now,
     inside: !!st.inside, dist: st.dist, acc: pos ? pos.acc : null,
-    gps: gpsState, source: locSource(), ip: currentIP, photo: photoDataUrl || null
-  });
+    gps: gpsState, source: locSource(), ip: currentIP, photo: photoDataUrl || null,
+    synced: false
+  };
+  records.unshift(rec);
   persistRecordsSafe();
   renderHistory();
+  sendToSheets(rec);
+}
+
+/* ---------- Envío a la hoja central (Google Sheets) ---------- */
+function sendToSheets(rec){
+  if (!rec.id) rec.id = "r" + (rec.when ? rec.when.getTime().toString(36) : Date.now().toString(36)) + Math.random().toString(36).slice(2, 8);
+  var payload = {key: SHEETS_KEY, fecha: (rec.when instanceof Date ? rec.when : new Date(rec.when)).toISOString(), empleado: rec.name, tipo: rec.type, enOficina: !!rec.inside, distancia: (rec.dist == null ? null : Math.round(rec.dist)), origen: rec.source || "sin señal", conFoto: !!rec.photo, id: rec.id};
+  try {
+    fetch(SHEETS_URL, {method: "POST", headers: {"Content-Type": "text/plain"}, body: JSON.stringify(payload)}).then(function(){ rec.synced = true; persistRecordsSafe(); }).catch(function(){ /* sin red: queda pendiente, se reintenta luego */ });
+  } catch(e){ /* sin red: queda pendiente */ }
+}
+function retryUnsynced(){
+  var weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  records.forEach(function(r){
+    if (r.synced) return;
+    if (!r.when || !(r.when instanceof Date) || isNaN(r.when.getTime()) || r.when.getTime() < weekAgo) return;
+    sendToSheets(r);
+  });
+}
+/* Solo se llama desde el Historial desbloqueado de RH. Nunca desde Checar
+   ni para empleados normales. */
+function fetchCentralHistory(){
+  fetch(SHEETS_URL + "?key=" + encodeURIComponent(SHEETS_KEY)).then(function(res){ return res.json(); }).then(function(data){
+    if (data && data.ok && data.rows instanceof Array){
+      centralRows = data.rows.slice().sort(function(a, b){ return new Date(b.fecha) - new Date(a.fecha); }).slice(0, 200);
+      centralFailed = false;
+    } else { centralRows = null; centralFailed = true; }
+    renderHistory();
+  }).catch(function(){ centralRows = null; centralFailed = true; renderHistory(); });
 }
 function tryRegister(type){
   var st = updateStatus();
@@ -646,33 +690,61 @@ function confirmPhotoRegister(){
 
 /* ---------- Historial / roles ---------- */
 function renderHistory(){
-  var empty = document.getElementById("histEmpty"), table = document.getElementById("histTable"), body = document.getElementById("histBody");
-  if (!records.length){ empty.style.display = "block"; table.classList.add("hidden"); return; }
+  var empty = document.getElementById("histEmpty"), table = document.getElementById("histTable"), body = document.getElementById("histBody"), note = document.getElementById("histCentralNote");
+  var central = centralRows !== null;
+  var rows = central ? centralRows : records;
+  if (note){
+    if (central) note.textContent = "Historial central — " + rows.length + " registros de todos los empleados";
+    else if (centralFailed) note.textContent = "Sin conexión: mostrando solo los registros de este celular";
+    else note.textContent = "Mostrando registros de este dispositivo";
+  }
+  if (!rows.length){
+    empty.style.display = "block";
+    empty.textContent = central ? "Todavía no hay registros en la hoja central." : "Todavía no hay registros en este dispositivo.";
+    table.classList.add("hidden"); return;
+  }
   empty.style.display = "none"; table.classList.remove("hidden");
   body.innerHTML = "";
-  records.forEach(function(r){
-    var ubi = r.inside ? "En oficina" : ("Fuera / no confirmado" + (r.dist != null ? " · " + fmt(r.dist) : " · sin GPS") + (r.acc != null ? " · ±" + Math.round(r.acc) + " m" : ""));
+  rows.forEach(function(r){
+    var name = central ? r.empleado : r.name;
+    var type = central ? r.tipo : r.type;
+    var when = central ? new Date(r.fecha) : r.when;
+    var inside = central ? !!r.enOficina : !!r.inside;
+    var dist = central ? r.distancia : r.dist;
+    var acc = central ? null : r.acc;
+    var src = central ? (r.origen || "sin señal") : (r.source || "sin señal");
+    var ubi = inside ? "En oficina" : ("Fuera / no confirmado" + (dist != null ? " · " + fmt(dist) : " · sin GPS") + (acc != null ? " · ±" + Math.round(acc) + " m" : ""));
     var tr = document.createElement("tr");
-    var c1 = document.createElement("td"); var b = document.createElement("b"); b.textContent = r.name; c1.appendChild(b);
-    var c2 = document.createElement("td"); c2.textContent = r.type;
-    var c3 = document.createElement("td"); c3.textContent = r.when.toLocaleDateString("es-MX") + " " + r.when.toLocaleTimeString("es-MX",{hour12:false});
+    var c1 = document.createElement("td"); var b = document.createElement("b"); b.textContent = name; c1.appendChild(b);
+    var c2 = document.createElement("td"); c2.textContent = type;
+    var c3 = document.createElement("td"); c3.textContent = (when instanceof Date && !isNaN(when.getTime())) ? (when.toLocaleDateString("es-MX") + " " + when.toLocaleTimeString("es-MX",{hour12:false})) : "—";
     var c4 = document.createElement("td"); c4.textContent = ubi;
-    var c4b = document.createElement("td"); c4b.textContent = locSourceLabel(r.source || "sin señal");
+    var c4b = document.createElement("td"); c4b.textContent = locSourceLabel(src);
     var c5 = document.createElement("td");
-    if (r.photo){ var im = document.createElement("img"); im.className = "rec-photo"; im.alt = "Foto de registro"; im.src = r.photo; c5.appendChild(im); }
+    if (central) c5.textContent = r.conFoto ? "Foto en su celular" : "Sin foto";
+    else if (r.photo){ var im = document.createElement("img"); im.className = "rec-photo"; im.alt = "Foto de registro"; im.src = r.photo; c5.appendChild(im); }
     else c5.textContent = "Sin foto";
     [c1,c2,c3,c4,c4b,c5].forEach(function(c){ tr.appendChild(c); });
     body.appendChild(tr);
   });
 }
 function downloadCSV(){
-  if(!records.length) return;
-  var rows = [["Empleado","Tipo","Fecha","Hora","Ubicacion","Origen","Distancia_m","Precision_m","Con_foto"]];
-  records.forEach(function(r){ rows.push([r.name, r.type, r.when.toLocaleDateString("es-MX"), r.when.toLocaleTimeString("es-MX",{hour12:false}), r.inside ? "En oficina" : "Fuera", locSourceLabel(r.source || "sin señal"), r.dist==null?"":Math.round(r.dist), r.acc==null?"":Math.round(r.acc), r.photo?"Si":"No"]); });
-  var csv = rows.map(function(r){ return r.map(function(c){ return '"' + String(c).replace(/"/g,'""') + '"'; }).join(","); }).join("\n");
+  var central = centralRows !== null;
+  var rows = central ? centralRows : records;
+  if(!rows.length) return;
+  var out = [["Empleado","Tipo","Fecha","Hora","Ubicacion","Origen","Distancia_m","Precision_m","Con_foto"]];
+  rows.forEach(function(r){
+    if (central){
+      var w = new Date(r.fecha);
+      out.push([r.empleado, r.tipo, w.toLocaleDateString("es-MX"), w.toLocaleTimeString("es-MX",{hour12:false}), r.enOficina ? "En oficina" : "Fuera", locSourceLabel(r.origen || "sin señal"), r.distancia==null?"":Math.round(r.distancia), "", r.conFoto?"Si":"No"]);
+    } else {
+      out.push([r.name, r.type, r.when.toLocaleDateString("es-MX"), r.when.toLocaleTimeString("es-MX",{hour12:false}), r.inside ? "En oficina" : "Fuera", locSourceLabel(r.source || "sin señal"), r.dist==null?"":Math.round(r.dist), r.acc==null?"":Math.round(r.acc), r.photo?"Si":"No"]);
+    }
+  });
+  var csv = out.map(function(r){ return r.map(function(c){ return '"' + String(c).replace(/"/g,'""') + '"'; }).join(","); }).join("\n");
   var a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob(["\ufeff" + csv], {type:"text/csv"}));
-  a.download = "checador-equimar-respaldo.csv"; a.click();
+  a.download = central ? "checador-equimar-central.csv" : "checador-equimar-respaldo.csv"; a.click();
   setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
 }
 function lockAdmin(){ unlockedFor = null; goTab("checar"); }
@@ -689,6 +761,7 @@ function goTab(tab){
     document.getElementById("view-checar").classList.remove("hidden");
     document.getElementById("view-historial").classList.add("hidden");
     document.getElementById("view-ajustes").classList.add("hidden");
+    retryUnsynced();
     return;
   }
   var name = currentEmployee();
@@ -700,6 +773,7 @@ function goTab(tab){
   document.getElementById("histContent").classList.toggle("hidden", !unlocked);
   document.getElementById("adjLocked").classList.toggle("hidden", unlocked);
   document.getElementById("adjContent").classList.toggle("hidden", !unlocked);
+  if (tab === "historial" && unlocked) fetchCentralHistory();
   if (isAdm && !unlocked) openPin(name);
 }
 function openPin(name){
@@ -744,6 +818,7 @@ fillEmployees();
 renderHistory();
 updateStatus();
 startGpsCheck(false);
+retryUnsynced();
 </script>
 </body>
 </html>
