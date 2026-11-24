@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0b4f8a">
+<link rel="icon" type="image/png" sizes="512x512" href="https://www.equimar.mx/wp-content/uploads/2023/02/favicon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="https://www.equimar.mx/wp-content/uploads/2023/02/favicon.png">
+<link rel="apple-touch-icon" href="https://www.equimar.mx/wp-content/uploads/2023/02/favicon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Checador Equimar Chrome</title>
+<style>
+:root{
+  --bg:#f1f5f9; --surface:#ffffff; --surface2:#e8eef5; --text:#0f2236; --muted:#5b7186; --line:#d3dee9;
+  --brand:#0b4f8a; --brand2:#0a3d6b; --green:#15803d; --green-bg:#dcfce7; --red:#b91c1c; --red-bg:#fee2e2;
+  --amber:#92400e; --amber-bg:#fef3c7; --radius:16px;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#0b1526; --surface:#16233a; --surface2:#1c2f4d; --text:#eef4fb; --muted:#9db2c8; --line:#2a3f5f; --brand:#1270c4; --brand2:#0b4f8a; --green-bg:#14532d; --red-bg:#450a0a; --amber-bg:#451a03; }
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.45}
+button,select,input{font:inherit;min-height:44px}
+button{cursor:pointer;border-radius:12px;border:1px solid transparent;padding:10px 16px;font-weight:700}
+button:disabled{opacity:.45;cursor:not-allowed}
+.wrap{max-width:720px;margin:0 auto;padding:0 16px 40px}
+.top{background:var(--brand2);color:#fff;margin:0 -16px;padding:18px 16px 14px}
+.logo-card{background:#fff;border-radius:12px;padding:10px 16px;display:inline-block}
+.logo-card img{display:block;height:36px;width:auto}
+.top-sub{opacity:.85;margin-top:10px;font-weight:400}
+.top b{letter-spacing:.04em}
+.top span{opacity:.85;font-weight:400}
+.tabs{display:flex;gap:4px;background:var(--surface);margin:0 -16px;padding:0 8px;border-bottom:2px solid var(--line);position:sticky;top:0;z-index:5}
+.tabs button{background:none;border:none;border-radius:0;color:var(--muted);flex:1;padding:14px 6px;border-bottom:3px solid transparent}
+.tabs button.active{color:var(--brand);border-bottom-color:var(--brand)}
+@media (prefers-color-scheme: dark){.tabs button.active{color:#7db9ef}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-top:16px}
+.card h2{margin:0 0 8px;font-size:1.15rem}
+.card h2.warn{color:#d97706}.card h2.err{color:var(--red)}.card h2.ok{color:var(--green)}
+.muted{color:var(--muted)} .small{font-size:.9rem}
+.proverb{font-style:italic;color:var(--muted);font-size:.95rem;margin:0 0 8px;text-align:center}
+.btn-primary{background:var(--brand);color:#fff;width:100%}
+.btn-green{background:var(--green);color:#fff;flex:1;font-size:1.1rem;padding:16px}
+.btn-out{background:var(--surface2);color:var(--text);border-color:var(--line);flex:1;font-size:1.1rem;padding:16px}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.clock{font-size:3.4rem;font-weight:800;text-align:center;line-height:1.05;letter-spacing:.02em;margin-top:10px;font-variant-numeric:tabular-nums}
+.date{text-align:center;color:var(--muted);text-transform:capitalize}
+select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text)}
+.pill{display:inline-block;padding:5px 12px;border-radius:999px;font-weight:700;font-size:.88rem}
+.pill.in{background:var(--green-bg);color:var(--green)} .pill.out{background:var(--amber-bg);color:var(--amber)} .pill.bad{background:var(--red-bg);color:var(--red)} .pill.mid{background:var(--surface2);color:var(--muted)}
+@media (prefers-color-scheme: dark){.pill.in{color:#86efac}.pill.out{color:#fcd34d}.pill.bad{color:#fca5a5}}
+.meta{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:.92rem;color:var(--muted)}
+.meta b{color:var(--text)}
+ol.steps{margin:10px 0 0;padding-left:20px} ol.steps li{margin:8px 0}
+.photo-box{display:none;margin-top:14px;border:1.5px dashed var(--line);border-radius:12px;padding:14px;text-align:center}
+.photo-box.show{display:block}
+.photo-box img{max-width:100%;border-radius:10px;margin-top:10px}
+.toast{display:none;margin-top:16px;padding:14px 16px;border-radius:12px;font-weight:600}
+.toast.show{display:block}.toast.ok{background:var(--green-bg);color:var(--green)}.toast.err{background:var(--red-bg);color:var(--red)}
+@media (prefers-color-scheme: dark){.toast.ok{color:#86efac}.toast.err{color:#fca5a5}}
+table{width:100%;border-collapse:collapse;font-size:.92rem}
+th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.04em}
+.rec-photo{width:52px;height:52px;object-fit:cover;border-radius:8px}
+.modal{position:fixed;inset:0;background:rgba(2,10,24,.65);display:none;align-items:center;justify-content:center;padding:16px;z-index:20}
+.modal.show{display:flex}
+.modal .box{background:var(--surface);border-radius:18px;padding:22px;width:100%;max-width:400px}
+.modal input{width:100%;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text);margin:6px 0 12px}
+label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
+.hidden{display:none!important}
+.progress{height:8px;background:var(--surface2);border-radius:99px;overflow:hidden;margin-top:12px}
+.progress i{display:block;height:100%;background:var(--brand);width:0%;transition:width .5s}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
+.kv:last-child{border-bottom:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><div class="logo-card"><img src="data:image/png;base64,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" alt="Equimar"></div><div class="top-sub">Registro de jornada</div></div>
+  <nav class="tabs" role="tablist">
+    <button id="tab-checar" class="active" onclick="goTab('checar')">Checar</button>
+    <button id="tab-historial" onclick="goTab('historial')">Historial 🔒 RH</button>
+    <button id="tab-ajustes" onclick="goTab('ajustes')">Ajustes 🔒 RH</button>
+  </nav>
+
+  <!-- CHECAR -->
+  <section id="view-checar">
+    <div class="card">
+      <p class="proverb" id="dailyProverb">—</p>
+      <label class="flabel" for="selEmployee">¿Quién registra?</label>
+      <select id="selEmployee" onchange="onEmployeeChange()"></select>
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="date" id="dateLine">—</div>
+      <div style="text-align:center;margin-top:12px"><span class="pill mid" id="statusPill">Verificando ubicación…</span></div>
+      <p class="small muted" id="gpsLine" style="text-align:center;margin:10px 0 0">Verificando ubicación…</p>
+      <div id="gpsSteps" class="hidden" style="text-align:left">
+        <ol class="steps small">
+          <li>Enciende la <b>Ubicación</b> del celular y activa la <b>ubicación precisa</b>.</li>
+          <li>En <b>Chrome</b>, toca el candado junto a la dirección &gt; Permisos &gt; Ubicación &gt; <b>Permitir</b>.</li>
+          <li>Regresa aquí y toca «Volver a verificar».</li>
+        </ol>
+      </div>
+      <div style="text-align:center;margin-top:8px"><button class="btn-out small" id="btnRetryGps" style="min-height:36px;padding:6px 14px;font-size:.9rem" onclick="startGpsCheck(true)">Volver a verificar</button></div>
+      <div class="photo-box" id="photoBox">
+        <b id="photoTitle">Se necesita tu foto para registrar</b>
+        <p class="small muted" id="photoReason" style="margin:6px 0 10px">Sin revisión de RH: con la pura foto queda registrado, con la hora y lo que se sepa de tu ubicación.</p>
+        <button class="btn-primary" onclick="document.getElementById('photoInput').click()">📷 Tomar foto</button>
+        <input type="file" id="photoInput" accept="image/*" capture="user" class="hidden" onchange="onPhoto(event)">
+        <img id="photoPreview" alt="Tu foto de registro" class="hidden">
+        <p class="small muted" id="photoHint">Todavía no hay foto.</p>
+      </div>
+
+      <div class="row" style="margin-top:18px">
+        <button class="btn-green" id="btnIn" onclick="tryRegister('Entrada')" disabled>Registrar entrada</button>
+        <button class="btn-out" id="btnOut" onclick="tryRegister('Salida')" disabled>Registrar salida</button>
+      </div>
+      <button class="btn-primary hidden" id="btnConfirmPhoto" style="margin-top:12px" onclick="confirmPhotoRegister()">Confirmar registro con foto</button>
+      <div class="toast" id="toast"></div>
+    </div>
+  </section>
+
+  <!-- HISTORIAL -->
+  <section id="view-historial" class="hidden">
+    <div class="card" id="histLocked">
+      <h2>Solo RH</h2>
+      <p class="muted" style="margin:0">El historial completo —con fotos, horas y distancias— solo lo ve <b>RH: Norma Mariscal, Mara Henao y Keiji Henao</b>. Los demás empleados solo se registran y no ven los registros de nadie.</p>
+      <p class="small muted">Si eres de RH, elige tu nombre en la pestaña Checar y vuelve aquí: te pedirá tu PIN.</p>
+    </div>
+    <div class="card hidden" id="histContent">
+      <h2>Registros de este dispositivo</h2>
+      <p class="small muted" style="margin:0 0 10px">Los registros se guardan en este dispositivo y se conservan al cerrar la app. Descarga el respaldo en CSV de vez en cuando para tenerlos fuera del celular.</p>
+      <div id="histEmpty" class="muted">Todavía no hay registros en este dispositivo.</div>
+      <div style="overflow-x:auto"><table id="histTable" class="hidden"><thead><tr><th>Empleado</th><th>Tipo</th><th>Fecha y hora</th><th>Ubicación</th><th>Origen</th><th>Foto</th></tr></thead><tbody id="histBody"></tbody></table></div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn-out" style="flex:1" onclick="downloadCSV()">Descargar respaldo (CSV)</button>
+        <button class="btn-out" style="flex:1" onclick="lockAdmin()">Bloquear vista RH</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- AJUSTES -->
+  <section id="view-ajustes" class="hidden">
+    <div class="card" id="adjLocked">
+      <h2>Solo RH</h2>
+      <p class="muted" style="margin:0">Los ajustes —punto de la oficina y alta de empleados— solo los puede cambiar <b>RH: Norma Mariscal, Mara Henao y Keiji Henao</b>, con su PIN.</p>
+    </div>
+    <div class="hidden" id="adjContent">
+      <div class="card">
+        <h2>Punto de la oficina</h2>
+        <div class="kv"><span class="muted">Estado</span><b id="officeState">No configurada</b></div>
+        <div class="kv"><span class="muted">Coordenadas</span><b id="officeCoords">—</b></div>
+        <div class="kv"><span class="muted">Radio permitido</span><b>50 m</b></div>
+        <div class="kv"><span class="muted">Precisión máxima para guardar</span><b>±50 m</b></div>
+        <div class="kv"><span class="muted">Guardado</span><b id="officeSaved">—</b></div>
+        <p class="small muted">El punto queda guardado para siempre en este dispositivo, aunque cierres la app. RH lo puede cambiar cuando quiera volviendo a guardar aquí. Para guardar el punto, párate en la puerta de la oficina, verifica el GPS y toca el botón. Si tu precisión es mayor a ±50 m, <b>no se guarda</b>: acércate a una ventana o sal un momento y vuelve a verificar.</p>
+        <button class="btn-primary" onclick="saveOfficePoint()">Guardar mi ubicación actual como puerta de la oficina</button>
+        <div class="toast" id="officeToast"></div>
+      </div>
+      <div class="card">
+        <h2>IP de la oficina</h2>
+        <p class="small muted" style="margin:0 0 8px">La IP solo es respaldo, nunca bloquea: si cambia, el GPS sigue mandando. Si tu IP actual coincide con una guardada, se te marca en oficina por WiFi/IP sin foto — estar en el WiFi de la oficina es estar en la oficina.</p>
+        <div class="kv"><span class="muted">Tu IP actual</span><b id="ipCurrent">—</b></div>
+        <div class="row" style="margin-top:10px"><button class="btn-primary" style="flex:1" onclick="saveCurrentIP()">Guardar mi IP actual como IP de oficina</button><button class="btn-out" onclick="refreshIP()">Actualizar IP</button></div>
+        <div id="ipList" style="margin-top:8px"></div>
+        <div class="toast" id="ipToast"></div>
+      </div>
+      <div class="card">
+        <h2>Empleados</h2>
+        <div id="empList"></div>
+        <label class="flabel" for="newEmp">Agregar empleado</label>
+        <div class="row">
+          <input id="newEmp" type="text" placeholder="Nombre completo" style="flex:2;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text)">
+          <button class="btn-primary" style="width:auto;flex:1" onclick="addEmployee()">Agregar</button>
+        </div>
+        <p class="small muted">RH (🔒) ve Historial y Ajustes con su PIN. Todos los demás solo se registran.</p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- PIN MODAL -->
+<div class="modal" id="pinModal">
+  <div class="box">
+    <h2 style="margin:0 0 4px" id="pinTitle">Acceso de RH</h2>
+    <p class="small muted" id="pinSub" style="margin:0"></p>
+    <div id="pinCreate">
+      <label class="flabel" for="newPin">Crea tu PIN (4 a 6 dígitos)</label>
+      <input id="newPin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+      <p class="small muted" style="margin:0">Créalo en tu propio celular: el PIN protege la vista de Historial y Ajustes en este dispositivo.</p>
+    </div>
+    <div id="pinEnter" class="hidden">
+      <label class="flabel" for="pinInput">Tu PIN</label>
+      <input id="pinInput" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+    </div>
+    <p class="small" id="pinErr" style="color:var(--red);min-height:1.2em;margin:4px 0"></p>
+    <div class="row">
+      <button class="btn-out" style="flex:1" onclick="closePin()">Cancelar</button>
+      <button class="btn-primary" style="flex:1;width:auto" onclick="submitPin()">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var RADIUS = 50, MAX_ACC = 50;
+var ADMINS = ["keiji andres henao bayon","norma mariscal","mara henao"];
+var employees = ["keiji andres henao bayon","Norma Mariscal","Mara Henao","Samuel Flores"];
+var office = null; // {lat, lon} — se fija parado en la puerta, desde Ajustes
+var records = [];  // registros de ESTE dispositivo, solo en memoria de la sesión
+var adminPins = {}; // nombre normalizado -> PIN (solo en memoria)
+var unlockedFor = null;
+var pendingTab = "checar";
+
+var pos = null; // {lat, lon, acc, source: 'gps' | 'wifi-red'}
+var gpsState = "checking"; // checking | ok | denied | timeout | unavailable
+var fallbackReady = false; // tras ~20 s sin GPS se habilita registro con foto
+var gpsStartedAt = 0, gpsTick = null, gpsElapsedTimer = null;
+var pendingType = null, photoDataUrl = null;
+var officeIPs = []; // IPs públicas de la oficina guardadas (la IP cambia) — solo respaldo, nunca bloquea
+var currentIP = null;
+
+/* ---------- Persistencia: todo queda guardado en este dispositivo ---------- */
+/* localStorage sobrevive a cerrar la app. Si no está disponible (modo privado,
+   WebView sin almacenamiento), todo sigue funcionando solo en memoria. */
+var LS_OFFICE = "checador.office.v1";
+var LS_IPS = "checador.officeIps.v1";
+var LS_EMP = "checador.employees.v1";
+var LS_PINS = "checador.pins.v1";
+var LS_REC = "checador.records.v1";
+function lsSet(key, value){
+  try { localStorage.setItem(key, JSON.stringify(value)); return true; }
+  catch(e){ return false; }
+}
+function lsGet(key){
+  try { var v = localStorage.getItem(key); return v == null ? null : JSON.parse(v); }
+  catch(e){ return null; }
+}
+function persistOffice(){ if (office) lsSet(LS_OFFICE, {lat: office.lat, lon: office.lon, savedAt: office.savedAt || new Date().toISOString()}); }
+function persistIPs(){ lsSet(LS_IPS, officeIPs); }
+function persistEmployees(){ lsSet(LS_EMP, employees); }
+function persistPins(){ lsSet(LS_PINS, adminPins); }
+function persistRecordsSafe(){
+  var ok = lsSet(LS_REC, records.slice(0, 200));
+  if (ok) return;
+  // Sin espacio: reintenta sin fotos.
+  var stripped = records.slice(0, 200).map(function(r){
+    var c = {}; for (var k in r) c[k] = r[k]; c.photo = null; return c;
+  });
+  lsSet(LS_REC, stripped);
+}
+function restorePersisted(){
+  var o = lsGet(LS_OFFICE);
+  if (o && typeof o.lat === "number" && typeof o.lon === "number") office = {lat: o.lat, lon: o.lon, savedAt: o.savedAt || null};
+  var ips = lsGet(LS_IPS);
+  if (ips && ips instanceof Array) officeIPs = ips.filter(function(x){ return typeof x === "string" && x; });
+  var emps = lsGet(LS_EMP);
+  if (emps && emps instanceof Array && emps.length) employees = emps.filter(function(x){ return typeof x === "string" && x.trim(); });
+  var pins = lsGet(LS_PINS);
+  if (pins && typeof pins === "object") adminPins = pins;
+  var recs = lsGet(LS_REC);
+  if (recs && recs instanceof Array){
+    records = recs.slice(0, 200).map(function(r){
+      if (r && r.when) r.when = new Date(r.when);
+      return r;
+    }).filter(function(r){ return r && r.name && r.when && !isNaN(r.when.getTime()); });
+  }
+}
+function renderOfficeState(){
+  var st = document.getElementById("officeState"), co = document.getElementById("officeCoords"), sv = document.getElementById("officeSaved");
+  if (!st || !co) return;
+  if (office){
+    st.textContent = "Configurada ✅";
+    co.textContent = office.lat.toFixed(6) + ", " + office.lon.toFixed(6);
+    if (sv) sv.textContent = office.savedAt ? new Date(office.savedAt).toLocaleDateString("es-MX") + " " + new Date(office.savedAt).toLocaleTimeString("es-MX", {hour12:false}) : "—";
+  } else {
+    st.textContent = "No configurada";
+    co.textContent = "—";
+    if (sv) sv.textContent = "—";
+  }
+}
+restorePersisted();
+var ipInOffice = false;
+var autoRetries = 0, autoRetryTimer = null; // reintentos automáticos de GPS, máx 5
+function locSource(){
+  if (ipInOffice) return "wifi-ip";
+  if (pos) return pos.source || "gps";
+  return "sin señal";
+}
+function locSourceLabel(src){
+  return {"gps":"GPS","wifi-red":"WiFi/red","wifi-ip":"WiFi/IP","sin señal":"Sin señal"}[src] || src;
+}
+
+function norm(s){ return (s||"").trim().toLowerCase(); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+function isAdmin(name){ return ADMINS.indexOf(norm(name)) >= 0; }
+function currentEmployee(){ return document.getElementById("selEmployee").value; }
+function fmt(n){ return n==null ? "—" : Math.round(n) + " m"; }
+
+function fillEmployees(){
+  var sel = document.getElementById("selEmployee"), cur = sel.value;
+  sel.innerHTML = "";
+  employees.forEach(function(e){
+    var o = document.createElement("option"); o.value = e; o.textContent = e + (isAdmin(e) ? " · RH" : "");
+    sel.appendChild(o);
+  });
+  if (cur && employees.indexOf(cur) >= 0) sel.value = cur;
+  onEmployeeChange(true);
+  renderEmpList();
+  renderIpList();
+  renderOfficeState();
+}
+function updateTabsVisibility(){
+  var show = isAdmin(currentEmployee());
+  document.getElementById("tab-historial").style.display = show ? "" : "none";
+  document.getElementById("tab-ajustes").style.display = show ? "" : "none";
+  if (!show && (pendingTab === "historial" || pendingTab === "ajustes")) goTab("checar");
+}
+function onEmployeeChange(keep){
+  var name = currentEmployee();
+  if (!keep && unlockedFor && norm(unlockedFor) !== norm(name)) unlockedFor = null;
+  updateTabsVisibility();
+}
+function renderEmpList(){
+  var el = document.getElementById("empList"); if(!el) return;
+  el.innerHTML = employees.map(function(e){
+    return '<div class="kv"><span>' + esc(e) + '</span><b>' + (isAdmin(e) ? "🔒 RH" : "Empleado") + '</b></div>';
+  }).join("");
+}
+function addEmployee(){
+  var inp = document.getElementById("newEmp"), v = inp.value.trim();
+  if(!v) return;
+  if(employees.some(function(e){return norm(e)===norm(v);})){ inp.value=""; return; }
+  employees.push(v); persistEmployees(); inp.value=""; fillEmployees();
+}
+
+/* ---------- Proverbio del día ---------- */
+var PROVERBS = [
+"El éxito es la suma de pequeños esfuerzos repetidos día a día",
+"La disciplina vence al talento cuando el talento no se disciplina",
+"Hoy es un buen día para hacer bien el trabajo",
+"Al que madruga, el día le rinde más",
+"No dejes para mañana lo que puedas hacer hoy",
+"Paso a paso se llega lejos",
+"La constancia convierte lo difícil en costumbre",
+"Cada día es una nueva oportunidad para empezar bien",
+"El trabajo bien hecho habla por ti",
+"Quien siembra esfuerzo, cosecha resultados",
+"La puntualidad es respeto por el tiempo de todos",
+"Haz hoy lo que otros no quieren, y mañana tendrás lo que otros no pueden",
+"Un equipo unido llega más lejos que uno solo",
+"La actitud es el primer paso del buen trabajo",
+"Los grandes logros empiezan con un primer paso",
+"No hay atajos para el trabajo bien hecho",
+"La mejor manera de predecir el futuro es construirlo hoy",
+"El esfuerzo de hoy es el descanso de mañana",
+"Quien no arriesga, no avanza",
+"La excelencia no es un acto, es un hábito",
+"Trabaja en silencio y deja que tus resultados hablen",
+"Cada reto es una oportunidad disfrazada",
+"La paciencia y la constancia lo logran todo",
+"Empieza donde estás, usa lo que tienes, haz lo que puedas",
+"El éxito no es suerte, es trabajo diario",
+"Hazlo con ganas o no lo hagas, pero hazlo bien",
+"Un buen día empieza con una buena actitud",
+"La confianza se gana con hechos, no con palabras",
+"Lo que haces hoy define tu mañana",
+"El orden y la constancia hacen el trabajo más ligero",
+"Nunca es tarde para hacer las cosas bien",
+"El que persevera, alcanza",
+"Cada mañana trae una página en blanco",
+"El compromiso es lo que convierte una promesa en realidad",
+"Trabajar en equipo multiplica los resultados",
+"La calidad nunca es un accidente",
+"Hoy puedes ser mejor que ayer",
+"Las pequeñas acciones diarias construyen grandes cambios",
+"El que no avanza, retrocede",
+"La mejor inversión es la que haces en ti mismo",
+"Haz tu trabajo con orgullo, aunque nadie te esté mirando",
+"La constancia es la llave de todas las puertas",
+"Un día a la vez, un paso a la vez",
+"El éxito llega para quien no deja de intentarlo",
+"La puntualidad abre puertas",
+"No cuentes los días, haz que los días cuenten",
+"El trabajo en equipo divide el esfuerzo y multiplica el éxito",
+"Aprende algo nuevo cada día",
+"La energía que pones hoy es el resultado de mañana",
+"Quien trabaja con el corazón, deja huella",
+"Los obstáculos son escalones, no muros",
+"La mejor forma de empezar es dejar de hablar y empezar a hacer",
+"Cada día cuenta, cada esfuerzo suma",
+"La responsabilidad es la base de la confianza",
+"El que busca, encuentra; el que insiste, logra",
+"Haz las cosas simples con excelencia",
+"El tiempo bien usado es el mejor aliado",
+"Cree en ti, el resto viene solo",
+"Un buen ambiente se construye entre todos",
+"La constancia de hoy es la tranquilidad de mañana",
+"No esperes el momento perfecto, haz perfecto el momento",
+"El que siembra orden, cosecha tranquilidad",
+"Trabaja hoy como quieres vivir mañana",
+"La buena actitud contagia más que las palabras",
+"Cada logro, por pequeño que sea, merece celebrarse",
+"El que se levanta temprano, gana el día",
+"Hazlo hoy, hazlo bien, hazlo con ganas",
+"El camino se hace caminando, paso a paso",
+"El respeto y el buen trato hacen mejor el trabajo",
+"Mañana se construye con lo que haces hoy"
+];
+function dayOfYear(d){ var start = new Date(d.getFullYear(), 0, 0); return Math.floor((d - start) / 86400000); }
+function proverbForDate(d){ return PROVERBS[dayOfYear(d) % PROVERBS.length]; }
+function renderProverb(){ var el = document.getElementById("dailyProverb"); if (el) el.textContent = "“" + proverbForDate(new Date()) + "”"; }
+renderProverb();
+
+/* ---------- Reloj ---------- */
+function tickClock(){
+  var d = new Date();
+  document.getElementById("clock").textContent = d.toLocaleTimeString("es-MX",{hour12:false});
+  document.getElementById("dateLine").textContent = d.toLocaleDateString("es-MX",{weekday:"long", day:"numeric", month:"long", year:"numeric"});
+  renderProverb();
+}
+setInterval(tickClock, 1000); tickClock();
+
+/* ---------- GPS: verificación al abrir, por etapas ---------- */
+function haversine(lat1, lon1, lat2, lon2){
+  var R = 6371000, t = Math.PI/180;
+  var a = Math.sin((lat2-lat1)*t/2)**2 + Math.cos(lat1*t)*Math.cos(lat2*t)*Math.sin((lon2-lon1)*t/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function distanceToOffice(){
+  if(!pos || !office) return null;
+  return haversine(pos.lat, pos.lon, office.lat, office.lon);
+}
+function setGpsCard(title, cls, msg, showSteps){
+  // Checar limpio: el GPS es una sola línea de estado bajo el reloj; los pasos
+  // de desbloqueo solo se muestran cuando el permiso está denegado.
+  var line = document.getElementById("gpsLine");
+  if (line) line.textContent = msg || title;
+  var steps = document.getElementById("gpsSteps");
+  if (steps) steps.classList.toggle("hidden", !showSteps);
+}
+function updateStatus(){
+  var pill = document.getElementById("statusPill");
+  var dist = distanceToOffice();
+  var inside = false, needPhoto = false;
+  var pTitle = document.getElementById("photoTitle"), pReason = document.getElementById("photoReason");
+  if (ipInOffice){ inside = true; pill.textContent = "✅ En oficina"; pill.className = "pill in"; setGpsCard("", "", "En oficina por WiFi/IP", false); }
+  else if (pos && office && pos.acc <= MAX_ACC && dist <= RADIUS){ inside = true; pill.textContent = "✅ En oficina"; pill.className = "pill in"; }
+  else if (pos && office && pos.acc > MAX_ACC){ needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill out"; pTitle.textContent = "No se confirmó que estés dentro de la oficina: tu foto hace el registro"; pReason.textContent = "Tu precisión es de ±" + Math.round(pos.acc) + " m y se aceptan ±50 m para registrar sin foto. Con la pura foto queda registrado, sin revisión de RH."; }
+  else if (pos && office){ needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill out"; pTitle.textContent = "Estás fuera de la oficina: se necesita tu foto para registrar"; pReason.textContent = "Sin revisión de RH: con la pura foto queda registrado, marcado como fuera, a " + fmt(dist) + " de la oficina, con la hora."; }
+  else if (pos && !office){ needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill out"; pTitle.textContent = "Todavía no se puede saber si estás dentro o fuera: se necesita tu foto"; pReason.textContent = "El punto de la oficina aún no está fijado (lo hace RH en Ajustes, parado en la puerta). Mientras tanto, el registro es con foto."; }
+  else if (fallbackReady){ needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill bad"; pTitle.textContent = "No se pudo determinar tu ubicación: se necesita tu foto"; pReason.textContent = "Sin GPS no se puede saber si estás dentro o fuera del radio de 50 m. Con la pura foto queda registrado, marcado como ubicación no determinada, con la hora."; }
+  else { pill.textContent = "Verificando ubicación…"; pill.className = "pill mid"; }
+  document.getElementById("photoBox").classList.toggle("show", needPhoto);
+  var canRegister = inside || (needPhoto && (photoDataUrl || inside === false) && (pos || fallbackReady));
+  // Dentro: botones directos. Fuera: primero foto, luego confirmar.
+  document.getElementById("btnIn").disabled = !(inside || (needPhoto && !photoDataUrl && (pos || fallbackReady)) || (needPhoto && !!photoDataUrl));
+  document.getElementById("btnOut").disabled = document.getElementById("btnIn").disabled;
+  if (needPhoto && !photoDataUrl){
+    document.getElementById("btnIn").textContent = "Primero toma tu foto ↑";
+    document.getElementById("btnOut").textContent = "Primero toma tu foto ↑";
+    document.getElementById("btnIn").disabled = true; document.getElementById("btnOut").disabled = true;
+    document.getElementById("btnConfirmPhoto").classList.add("hidden");
+  } else {
+    document.getElementById("btnIn").textContent = "Registrar entrada";
+    document.getElementById("btnOut").textContent = "Registrar salida";
+    document.getElementById("btnConfirmPhoto").classList.toggle("hidden", !(needPhoto && photoDataUrl));
+  }
+  return {inside: inside, needPhoto: needPhoto, dist: dist};
+}
+/* ---------- IP pública: respaldo por WiFi, nunca bloquea ---------- */
+async function fetchIP(){
+  try {
+    var ctrl = new AbortController();
+    var to = setTimeout(function(){ ctrl.abort(); }, 5000);
+    var r = await fetch("https://api.ipify.org?format=json", {signal: ctrl.signal});
+    clearTimeout(to);
+    if (!r.ok) return;
+    var j = await r.json();
+    if (!j || !j.ip) return;
+    currentIP = j.ip;
+    ipInOffice = officeIPs.indexOf(currentIP) >= 0;
+    var el = document.getElementById("ipCurrent");
+    if (el) el.textContent = currentIP + (ipInOffice ? " · coincide con la IP de oficina ✅" : "");
+    renderIpList();
+    if (ipInOffice) updateStatus();
+  } catch(e){ /* sin internet o ipify no responde: se ignora en silencio, el GPS manda */ }
+}
+function renderIpList(){
+  var el = document.getElementById("ipList"); if(!el) return;
+  if (!officeIPs.length){ el.innerHTML = '<p class="small muted" style="margin:0">No hay IPs de oficina guardadas. Párate en el WiFi de la oficina y guarda tu IP actual.</p>'; return; }
+  el.innerHTML = officeIPs.map(function(ip, i){
+    return '<div class="kv"><span>' + esc(ip) + (ip === currentIP ? ' · tu IP actual ✅' : '') + '</span><button class="btn-out small" style="min-height:36px;padding:4px 12px" onclick="removeIp(' + i + ')">Quitar</button></div>';
+  }).join("");
+}
+function saveCurrentIP(){
+  var t = document.getElementById("ipToast");
+  if (!currentIP){ fetchIP(); if (t){ t.textContent = "Todavía no se detectó tu IP, espera unos segundos y vuelve a intentar."; t.className = "toast show err"; } return; }
+  if (officeIPs.indexOf(currentIP) < 0) officeIPs.push(currentIP);
+  persistIPs();
+  ipInOffice = true;
+  renderIpList(); updateStatus();
+  if (t){ t.textContent = "✅ IP " + currentIP + " guardada como IP de oficina."; t.className = "toast show ok"; }
+  var el = document.getElementById("ipCurrent");
+  if (el) el.textContent = currentIP + " · coincide con la IP de oficina ✅";
+}
+function removeIp(i){
+  officeIPs.splice(i, 1);
+  persistIPs();
+  ipInOffice = currentIP ? officeIPs.indexOf(currentIP) >= 0 : false;
+  renderIpList(); updateStatus();
+}
+function refreshIP(){ fetchIP(); }
+function getPos(opts){
+  return new Promise(function(res, rej){
+    navigator.geolocation.getCurrentPosition(res, rej, opts);
+  });
+}
+function scheduleAutoRetry(){
+  // Reintento automático tras fallo/timeout/precisión baja: avisa y reintenta solo, máx 5 veces.
+  if (autoRetries >= 5){
+    setGpsCard("", "", "No entró el GPS tras 5 intentos automáticos. Ya puedes registrar con foto o tocar «Volver a verificar».", false);
+    return;
+  }
+  autoRetries++;
+  var n = autoRetries;
+  setGpsCard("", "", "No entró el GPS, verificando de nuevo solo… (intento " + n + " de 5)", false);
+  clearTimeout(autoRetryTimer);
+  autoRetryTimer = setTimeout(function(){ startGpsCheck(false, true); }, 13000);
+}
+async function startGpsCheck(manual, isAuto){
+  if(!("geolocation" in navigator)){
+    gpsState = "unavailable"; fallbackReady = true;
+    setGpsCard("Este navegador no tiene GPS", "err", "Chrome no entregó la ubicación. Puedes registrarte con foto, marcado como sin señal GPS.", false);
+    updateStatus(); return;
+  }
+  if (manual){ autoRetries = 0; clearTimeout(autoRetryTimer); }
+  gpsState = "checking"; pos = null; if(!manual) fallbackReady = false;
+  gpsStartedAt = Date.now();
+  if (!isAuto) setGpsCard("Verificando el GPS…", "", "Verificando ubicación…", false);
+  fetchIP(); // en paralelo: si el WiFi de la oficina coincide, ya marca en oficina sin esperar al GPS
+  clearInterval(gpsTick);
+  gpsTick = setInterval(function(){
+    var s = Math.floor((Date.now() - gpsStartedAt) / 1000);
+    if (s >= 20 && gpsState === "checking" && !fallbackReady){
+      fallbackReady = true; updateStatus();
+    }
+  }, 500);
+  var stages = [
+    {opts: {enableHighAccuracy:false, timeout:7000, maximumAge:60000}, source: "wifi-red"},
+    {opts: {enableHighAccuracy:true, timeout:14000, maximumAge:0}, source: "gps"},
+    {opts: {enableHighAccuracy:true, timeout:14000, maximumAge:0}, source: "gps"}
+  ];
+  var lastErr = null;
+  for (var i = 0; i < stages.length; i++){
+    try {
+      var p = await getPos(stages[i].opts);
+      pos = {lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, source: stages[i].source};
+      gpsState = "ok"; clearInterval(gpsTick); autoRetries = 0; clearTimeout(autoRetryTimer);
+      var st = updateStatus();
+      if (pos.acc <= MAX_ACC){
+        setGpsCard("GPS activo ✅", "ok", "GPS activo", false);
+      } else {
+        setGpsCard("GPS activo, precisión baja", "warn", "GPS activo, precisión baja (±" + Math.round(pos.acc) + " m). Puedes registrar con foto.", false);
+        scheduleAutoRetry(); // precisión baja: reintenta solo para lograr el ±50 m
+      }
+      return;
+    } catch(e){ lastErr = e; if (e && e.code === 1) break; }
+  }
+  // GPS no entró: respaldo por WiFi/red (lectura de baja precisión) y por IP (ya pedida con fetchIP).
+  try {
+    var pw = await getPos({enableHighAccuracy:false, timeout:8000, maximumAge:60000});
+    pos = {lat: pw.coords.latitude, lon: pw.coords.longitude, acc: pw.coords.accuracy, source: "wifi-red"};
+    gpsState = "ok"; clearInterval(gpsTick); autoRetries = 0; clearTimeout(autoRetryTimer);
+    updateStatus();
+    setGpsCard("", "", "Ubicación por WiFi/red", false);
+    if (pos.acc > MAX_ACC) scheduleAutoRetry();
+    return;
+  } catch(e2){ if (e2 && e2.code === 1) lastErr = e2; }
+  clearInterval(gpsTick); fallbackReady = true;
+  if (lastErr && lastErr.code === 1){
+    gpsState = "denied";
+    setGpsCard("Ubicación bloqueada en Chrome", "err", "Ubicación bloqueada en Chrome — toca para ver cómo desbloquearla", true);
+  } else if (lastErr && lastErr.code === 3){
+    gpsState = "timeout";
+    setGpsCard("El GPS no respondió a tiempo", "err", "El GPS no respondió a tiempo. Ya puedes registrar con foto.", false);
+    scheduleAutoRetry();
+  } else {
+    gpsState = "unavailable";
+    setGpsCard("Sin ubicación disponible", "err", "Sin ubicación disponible. Ya puedes registrar con foto.", false);
+    scheduleAutoRetry();
+  }
+  updateStatus();
+}
+document.addEventListener("visibilitychange", function(){ if(!document.hidden && gpsState !== "ok") startGpsCheck(false); });
+
+/* ---------- Foto ---------- */
+function onPhoto(ev){
+  var f = ev.target.files && ev.target.files[0]; if(!f) return;
+  var r = new FileReader();
+  r.onload = function(){
+    photoDataUrl = r.result;
+    var img = document.getElementById("photoPreview");
+    img.src = photoDataUrl; img.classList.remove("hidden");
+    document.getElementById("photoHint").textContent = "Foto lista. Ahora confirma tu registro.";
+    updateStatus();
+  };
+  r.readAsDataURL(f);
+}
+function resetPhoto(){
+  photoDataUrl = null; pendingType = null;
+  document.getElementById("photoInput").value = "";
+  document.getElementById("photoPreview").classList.add("hidden");
+  document.getElementById("photoHint").textContent = "Todavía no hay foto.";
+}
+
+/* ---------- Registro ---------- */
+function showToast(msg, ok){
+  var t = document.getElementById("toast"); t.textContent = msg; t.className = "toast show " + (ok ? "ok" : "err");
+  setTimeout(function(){ t.classList.remove("show"); }, 6000);
+}
+function saveRecord(type, st){
+  var now = new Date();
+  records.unshift({
+    name: currentEmployee(), type: type, when: now,
+    inside: !!st.inside, dist: st.dist, acc: pos ? pos.acc : null,
+    gps: gpsState, source: locSource(), ip: currentIP, photo: photoDataUrl || null
+  });
+  persistRecordsSafe();
+  renderHistory();
+}
+function tryRegister(type){
+  var st = updateStatus();
+  if (st.inside){ saveRecord(type, st); resetPhoto(); updateStatus(); showToast("✅ " + type + " registrada en oficina — " + currentEmployee() + ", " + new Date().toLocaleTimeString("es-MX",{hour12:false}) + ". Sin foto, dentro del radio de 50 m.", true); return; }
+  if (!photoDataUrl){ showToast("Estás fuera de la oficina (o sin señal GPS): primero toma tu foto arriba para poder registrar.", false); document.getElementById("photoBox").scrollIntoView({behavior:"smooth"}); return; }
+  pendingType = type; confirmPhotoRegister();
+}
+function confirmPhotoRegister(){
+  var type = pendingType || "Entrada";
+  var st = updateStatus();
+  if (!photoDataUrl){ showToast("Falta tu foto para registrar fuera de la oficina.", false); return; }
+  saveRecord(type, st);
+  var why = !pos ? "sin señal GPS" : (!office ? "oficina aún no configurada" : (pos.acc > MAX_ACC ? "precisión de ±" + Math.round(pos.acc) + " m" : "a " + fmt(st.dist) + " de la oficina"));
+  resetPhoto(); updateStatus();
+  showToast("✅ " + type + " registrada con foto — " + currentEmployee() + ", " + new Date().toLocaleTimeString("es-MX",{hour12:false}) + ". Marcada como fuera / no confirmada: " + why + ".", true);
+}
+
+/* ---------- Historial / roles ---------- */
+function renderHistory(){
+  var empty = document.getElementById("histEmpty"), table = document.getElementById("histTable"), body = document.getElementById("histBody");
+  if (!records.length){ empty.style.display = "block"; table.classList.add("hidden"); return; }
+  empty.style.display = "none"; table.classList.remove("hidden");
+  body.innerHTML = "";
+  records.forEach(function(r){
+    var ubi = r.inside ? "En oficina" : ("Fuera / no confirmado" + (r.dist != null ? " · " + fmt(r.dist) : " · sin GPS") + (r.acc != null ? " · ±" + Math.round(r.acc) + " m" : ""));
+    var tr = document.createElement("tr");
+    var c1 = document.createElement("td"); var b = document.createElement("b"); b.textContent = r.name; c1.appendChild(b);
+    var c2 = document.createElement("td"); c2.textContent = r.type;
+    var c3 = document.createElement("td"); c3.textContent = r.when.toLocaleDateString("es-MX") + " " + r.when.toLocaleTimeString("es-MX",{hour12:false});
+    var c4 = document.createElement("td"); c4.textContent = ubi;
+    var c4b = document.createElement("td"); c4b.textContent = locSourceLabel(r.source || "sin señal");
+    var c5 = document.createElement("td");
+    if (r.photo){ var im = document.createElement("img"); im.className = "rec-photo"; im.alt = "Foto de registro"; im.src = r.photo; c5.appendChild(im); }
+    else c5.textContent = "Sin foto";
+    [c1,c2,c3,c4,c4b,c5].forEach(function(c){ tr.appendChild(c); });
+    body.appendChild(tr);
+  });
+}
+function downloadCSV(){
+  if(!records.length) return;
+  var rows = [["Empleado","Tipo","Fecha","Hora","Ubicacion","Origen","Distancia_m","Precision_m","Con_foto"]];
+  records.forEach(function(r){ rows.push([r.name, r.type, r.when.toLocaleDateString("es-MX"), r.when.toLocaleTimeString("es-MX",{hour12:false}), r.inside ? "En oficina" : "Fuera", locSourceLabel(r.source || "sin señal"), r.dist==null?"":Math.round(r.dist), r.acc==null?"":Math.round(r.acc), r.photo?"Si":"No"]); });
+  var csv = rows.map(function(r){ return r.map(function(c){ return '"' + String(c).replace(/"/g,'""') + '"'; }).join(","); }).join("\n");
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["\ufeff" + csv], {type:"text/csv"}));
+  a.download = "checador-equimar-respaldo.csv"; a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+}
+function lockAdmin(){ unlockedFor = null; goTab("checar"); }
+
+/* ---------- Tabs + PIN ---------- */
+function goTab(tab){
+  // Solo RH puede abrir Historial y Ajustes, aunque se llame directo.
+  if (tab !== "checar" && !isAdmin(currentEmployee())){
+    tab = "checar";
+  }
+  pendingTab = tab;
+  ["checar","historial","ajustes"].forEach(function(t){ document.getElementById("tab-" + t).classList.toggle("active", t === tab); });
+  if (tab === "checar"){
+    document.getElementById("view-checar").classList.remove("hidden");
+    document.getElementById("view-historial").classList.add("hidden");
+    document.getElementById("view-ajustes").classList.add("hidden");
+    return;
+  }
+  var name = currentEmployee();
+  var isAdm = isAdmin(name), unlocked = isAdm && unlockedFor && norm(unlockedFor) === norm(name);
+  document.getElementById("view-checar").classList.add("hidden");
+  document.getElementById("view-historial").classList.toggle("hidden", tab !== "historial");
+  document.getElementById("view-ajustes").classList.toggle("hidden", tab !== "ajustes");
+  document.getElementById("histLocked").classList.toggle("hidden", unlocked);
+  document.getElementById("histContent").classList.toggle("hidden", !unlocked);
+  document.getElementById("adjLocked").classList.toggle("hidden", unlocked);
+  document.getElementById("adjContent").classList.toggle("hidden", !unlocked);
+  if (isAdm && !unlocked) openPin(name);
+}
+function openPin(name){
+  var has = !!adminPins[norm(name)];
+  document.getElementById("pinSub").textContent = has ? (name + ", escribe tu PIN de RH.") : (name + ", es tu primera vez en este dispositivo: crea tu PIN personal de RH.");
+  document.getElementById("pinCreate").classList.toggle("hidden", has);
+  document.getElementById("pinEnter").classList.toggle("hidden", !has);
+  document.getElementById("pinErr").textContent = "";
+  document.getElementById("pinModal").classList.add("show");
+}
+function closePin(){ document.getElementById("pinModal").classList.remove("show"); if(!unlockedFor) goTab("checar"); }
+function submitPin(){
+  var name = currentEmployee(), key = norm(name), err = document.getElementById("pinErr");
+  if (!adminPins[key]){
+    var pin = document.getElementById("newPin").value.trim();
+    if (!/^\d{4,6}$/.test(pin)){ err.textContent = "El PIN debe tener de 4 a 6 dígitos."; return; }
+    adminPins[key] = pin;
+    persistPins();
+  } else {
+    if (document.getElementById("pinInput").value.trim() !== adminPins[key]){ err.textContent = "PIN incorrecto."; return; }
+  }
+  unlockedFor = name;
+  document.getElementById("pinModal").classList.remove("show");
+  goTab(pendingTab);
+}
+
+/* ---------- Ajustes: punto de oficina ---------- */
+function saveOfficePoint(){
+  var t = document.getElementById("officeToast");
+  function fail(m){ t.textContent = m; t.className = "toast show err"; }
+  if (!pos){ fail("Todavía no hay ubicación. Ve a Checar y toca «Volver a verificar» hasta que el GPS responda."); return; }
+  if (pos.acc > MAX_ACC){ fail("⛔ No se guardó: tu precisión es de ±" + Math.round(pos.acc) + " m y el máximo para guardar es ±50 m. Acércate a una ventana o sal un momento y vuelve a verificar."); return; }
+  office = {lat: pos.lat, lon: pos.lon, savedAt: new Date().toISOString()};
+  persistOffice();
+  renderOfficeState();
+  t.textContent = "✅ Punto de la oficina guardado para siempre en este dispositivo (RH lo puede cambiar cuando quiera) con precisión de ±" + Math.round(pos.acc) + " m. Radio: 50 m.";
+  t.className = "toast show ok";
+  updateStatus();
+}
+
+fillEmployees();
+renderHistory();
+updateStatus();
+startGpsCheck(false);
+</script>
+</body>
+</html>

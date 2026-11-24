@@ -1,0 +1,23 @@
+{
+  "name": "Checador Equimar",
+  "short_name": "Checador",
+  "description": "Registro de jornada de Equimar",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0b4f8a",
+  "start_url": "index.html",
+  "icons": [
+    {
+      "src": "https://www.equimar.mx/wp-content/uploads/2023/02/favicon.png",
+      "sizes": "36x38",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://www.equimar.mx/wp-content/uploads/2023/02/favicon.png",
+      "sizes": "36x38",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
