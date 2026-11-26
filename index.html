@@ -105,13 +105,6 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
       <select id="selEmployee" onchange="onEmployeeChange()"></select>
       </div>
       <div id="enrolledAs" class="hidden" style="text-align:center;font-size:1.05rem;margin-bottom:6px">Registrando como: <b id="enrolledName"></b></div>
-      <div id="rhGateEnrolled" class="hidden" style="margin:2px 0 8px">
-        <label class="flabel" for="rhNameSel2">¿Eres de RH?</label>
-        <div class="row">
-          <select id="rhNameSel2" style="flex:2"></select>
-          <button class="btn-out" style="flex:1" onclick="openRhGate2()">Soy RH</button>
-        </div>
-      </div>
       <div class="clock" id="clock">--:--:--</div>
       <div class="date" id="dateLine">—</div>
       <div style="text-align:center;margin-top:12px"><span class="pill mid" id="statusPill">Verificando ubicación…</span></div>
@@ -480,11 +473,6 @@ function fillEmployees(){
   });
   if (enrollment && employees.indexOf(enrollment.empleado) >= 0) sel.value = enrollment.empleado;
   else if (cur && employees.indexOf(cur) >= 0) sel.value = cur;
-  var rhIds = ["rhNameSel2"];
-  rhIds.forEach(function(id){
-    var rh = document.getElementById(id);
-    if (rh){ rh.innerHTML = ""; employees.filter(function(e){ return isAdmin(e); }).forEach(function(e){ var o = document.createElement("option"); o.value = e; o.textContent = e; rh.appendChild(o); }); }
-  });
   onEmployeeChange(true);
   renderEmpList();
   renderRhRoles();
@@ -492,15 +480,11 @@ function fillEmployees(){
   renderOfficeState();
 }
 function updateTabsVisibility(){
-  // Sin alta, nadie ve Historial/Ajustes: solo el dueño del celular
-  // (si es RH) o RH desbloqueado con PIN desde la vista Checar.
+  // Las pestañas Historial/Ajustes solo se ven si el dueño del celular es RH
+  // (según la lista central de RH) o si RH ya se desbloqueó con PIN.
   var show = (!!enrollment && isAdmin(currentEmployee())) || !!unlockedFor;
   document.getElementById("tab-historial").style.display = show ? "" : "none";
   document.getElementById("tab-ajustes").style.display = show ? "" : "none";
-  // Celular ya registrado pero sin pestañas de RH: ofrecer la entrada "Soy RH"
-  // (p. ej. el nombre escrito al registrarse no coincide con un admin).
-  var rhE = document.getElementById("rhGateEnrolled");
-  if (rhE) rhE.classList.toggle("hidden", !(enrollment && !isAdmin(currentEmployee()) && !unlockedFor));
   if (!show && (pendingTab === "historial" || pendingTab === "ajustes")) goTab("checar");
 }
 function onEmployeeChange(keep){
@@ -684,15 +668,6 @@ function submitEnrollName(){
     }
   }).catch(function(){ setEnrollStatus("Sin conexión: abre el enlace de nuevo cuando tengas internet.", false); });
 }
-function openRhGate2(){ openRhGateFor("rhNameSel2"); }
-function openRhGateFor(id){
-  var sel = document.getElementById(id);
-  var name = sel ? sel.value : "";
-  if (!name || !isAdmin(name)) return;
-  pendingTab = "ajustes";
-  openPin(name);
-}
-
 /* ---------- Enlaces personales (Ajustes, solo RH) ---------- */
 var linkRows = null; // filas de la hoja "Enlaces" (null = aún no cargadas)
 var lastGenLink = ""; // último enlace generado en esta sesión
