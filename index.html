@@ -1401,6 +1401,23 @@ async function confirmPhotoRegister(){
 }
 
 /* ---------- Historial / roles ---------- */
+/* v1.11.3: la hoja nueva escribe conFoto como "Sí"/"No" y deja distancia e
+   id vacíos en las filas nuevas; las filas viejas traen true/false y la
+   distancia llena. Los dos formatos conviven en la misma lista, así que el
+   Historial normaliza antes de mostrar. */
+function hasPhotoVal(v){
+  if (v === true) return true;
+  if (typeof v === "string"){
+    var s = v.trim().toLowerCase().replace(/[íì]/g, "i");
+    return s === "si";
+  }
+  return false;
+}
+function distVal(v){
+  if (v === null || v === undefined || v === "") return null;
+  var n = Number(v);
+  return isNaN(n) ? null : n;
+}
 function renderHistory(){
   var empty = document.getElementById("histEmpty"), table = document.getElementById("histTable"), body = document.getElementById("histBody"), note = document.getElementById("histCentralNote");
   var central = centralRows !== null;
@@ -1422,7 +1439,7 @@ function renderHistory(){
     var type = central ? r.tipo : r.type;
     var when = central ? new Date(r.fecha) : r.when;
     var inside = central ? !!r.enOficina : !!r.inside;
-    var dist = central ? r.distancia : r.dist;
+    var dist = central ? distVal(r.distancia) : r.dist;
     var acc = central ? null : r.acc;
     var src = central ? (r.origen || "sin señal") : (r.source || "sin señal");
     var ubi = inside ? "En oficina" : ("Fuera / no confirmado" + (dist != null ? " · " + fmt(dist) : " · sin GPS") + (acc != null ? " · ±" + Math.round(acc) + " m" : ""));
@@ -1433,7 +1450,7 @@ function renderHistory(){
     var c4 = document.createElement("td"); c4.textContent = ubi;
     var c4b = document.createElement("td"); c4b.textContent = locSourceLabel(src);
     var c5 = document.createElement("td");
-    if (central) c5.textContent = r.conFoto ? "Foto en su celular" : "Sin foto";
+    if (central) c5.textContent = hasPhotoVal(r.conFoto) ? "Foto en su celular" : "Sin foto";
     else if (r.photo){ var im = document.createElement("img"); im.className = "rec-photo"; im.alt = "Foto de registro"; im.src = r.photo; c5.appendChild(im); }
     else c5.textContent = "Sin foto";
     [c1,c2,c3,c4,c4b,c5].forEach(function(c){ tr.appendChild(c); });
@@ -1448,7 +1465,8 @@ function downloadCSV(){
   rows.forEach(function(r){
     if (central){
       var w = new Date(r.fecha);
-      out.push([r.empleado, r.tipo, w.toLocaleDateString("es-MX"), w.toLocaleTimeString("es-MX",{hour12:false}), r.enOficina ? "En oficina" : "Fuera", locSourceLabel(r.origen || "sin señal"), r.distancia==null?"":Math.round(r.distancia), "", r.conFoto?"Si":"No"]);
+      var dv = distVal(r.distancia);
+      out.push([r.empleado, r.tipo, w.toLocaleDateString("es-MX"), w.toLocaleTimeString("es-MX",{hour12:false}), r.enOficina ? "En oficina" : "Fuera", locSourceLabel(r.origen || "sin señal"), dv==null?"":Math.round(dv), "", hasPhotoVal(r.conFoto)?"Si":"No"]);
     } else {
       out.push([r.name, r.type, r.when.toLocaleDateString("es-MX"), r.when.toLocaleTimeString("es-MX",{hour12:false}), r.inside ? "En oficina" : "Fuera", locSourceLabel(r.source || "sin señal"), r.dist==null?"":Math.round(r.dist), r.acc==null?"":Math.round(r.acc), r.photo?"Si":"No"]);
     }
