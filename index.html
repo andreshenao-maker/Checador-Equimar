@@ -232,6 +232,12 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
         <p class="small" id="rhErr" style="color:var(--red);min-height:1.2em;margin:4px 0"></p>
       </div>
       <div class="card">
+        <h2>Correos para avisos</h2>
+        <p class="small muted" style="margin:0 0 8px">Los avisos salen a las 14:00 y a las 15:00, de lunes a viernes, solo a quienes les falte ese registro.</p>
+        <div id="correoList"><p class="small muted">Cargando correos…</p></div>
+        <div class="toast" id="correoToast"></div>
+      </div>
+      <div class="card">
         <h2>Enlaces personales de alta</h2>
         <p class="small muted" style="margin:0 0 8px">Genera un enlace y mándalo por WhatsApp a la persona que se va a registrar. Al abrirlo escribe su nombre y ese celular queda registrado solo para ella. El enlace solo sirve una vez: si se abre en otro celular, ya no funciona.</p>
         <div class="row" style="margin-top:10px"><button class="btn-primary" style="flex:1" onclick="genGenericLink()">Generar enlace de alta</button></div>
@@ -271,11 +277,13 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
 
 <script>
 var RADIUS = 50, MAX_ACC = 50;
-var DAY_SLOTS = [ // pasos de la jornada (v1.11.1: horas en 24 h)
+var DAY_SLOTS = [ // filas de la tarjeta "Mis registros de hoy" (v1.13: sin
+  // horarios fijos — solo la estructura del día: entrada, salida, entrada,
+  // salida; la hora la pone cada registro, no la fila)
   {label: "Entrada", sub: "mañana"},
-  {label: "Salida comida", sub: "14:00"},
-  {label: "Entrada", sub: "15:00"},
-  {label: "Salida final", sub: "18:00"}
+  {label: "Salida comida", sub: ""},
+  {label: "Entrada", sub: ""},
+  {label: "Salida final", sub: ""}
 ];
 var ADMINS = ["keiji andres henao bayon","norma mariscal","mara henao"];
 var rhList = null; // lista RH central (de la hoja); null = usar ADMINS
@@ -776,7 +784,138 @@ function refreshLinks(){
     if (data && data.ok && data.rows instanceof Array){ linkRows = data.rows; }
     else { linkRows = null; }
     renderLinks();
-  }).catch(function(){ linkRows = null; renderLinks(); });
+    if (document.getElementById("correoList")) renderCorreos();
+  }).catch(function(){ linkRows = null; renderLinks(); if (document.getElementById("correoList")) renderCorreos(); });
+}
+
+/* ---------- Correos para avisos (Ajustes, solo RH) ---------- */
+/* Cada persona tiene un correo guardado en la pestaña "Correos" de la
+   hoja; los avisos de las 14:00 y las 15:00 salen por correo a quienes
+   les falte ese registro. El correo se vincula por nombre aunque la
+   persona se haya registrado con el nombre incompleto (prefijo
+   bidireccional, como adminMatch). */
+var correoRows = null; // [{nombre, correo}] central (null = aún no cargados)
+var correoList = [];   // filas calculadas para mostrar: [{display, correo, enrolled}]
+function normKey(s){ return norm(s).replace(/\s+/g, " "); }
+function namesLink(a, b){ // un nombre es prefijo del otro (o igual)
+  var x = normKey(a), y = normKey(b);
+  if (!x || !y) return false;
+  return x === y || x.indexOf(y) === 0 || y.indexOf(x) === 0;
+}
+function enrolledNames(){
+  var names = [];
+  if (linkRows) linkRows.forEach(function(r){ if (r && r.empleado) names.push(r.empleado); });
+  return names;
+}
+function buildCorreoList(){
+  // Unión: empleados locales + inscritos (enlaces) + nombres con correo central.
+  var map = {}; // key normalizada -> {display, correo, enrolled}
+  function add(name, correo){
+    if (!name) return;
+    var key = normKey(name);
+    if (!key) return;
+    var disp = String(name).trim().replace(/\s+/g, " ");
+    // Misma persona con otro spelling (p. ej. inscrito como "Gabriel
+    // Alejandro" y correo guardado como "Gabriel Alejandro Flores
+    // Arellano"): una sola fila, con el nombre más largo.
+    var foundKey = null;
+    Object.keys(map).forEach(function(k){ if (!foundKey && namesLink(k, key)) foundKey = k; });
+    if (!foundKey){ map[key] = {display: disp, correo: "", enrolled: null}; foundKey = key; }
+    var cur = map[foundKey];
+    if (disp.length > cur.display.length) cur.display = disp; // quedarse con el nombre más largo
+    if (correo && !cur.correo) cur.correo = correo;
+  }
+  employees.forEach(function(e){ add(e); });
+  enrolledNames().forEach(function(n){ add(n); });
+  if (correoRows) correoRows.forEach(function(c){ if (c) add(c.nombre, c.correo); });
+  var list = Object.keys(map).map(function(k){ return map[k]; });
+  var enrolled = enrolledNames();
+  list.forEach(function(row){
+    var match = null;
+    enrolled.forEach(function(n){ if (!match && namesLink(row.display, n)) match = n; });
+    row.enrolled = match;
+  });
+  list.sort(function(a, b){ return a.display.localeCompare(b.display, "es"); });
+  return list;
+}
+function renderCorreos(){
+  var el = document.getElementById("correoList"); if (!el) return;
+  correoList = buildCorreoList();
+  if (!correoList.length){ el.innerHTML = '<p class="small muted">Todavía no hay empleados.</p>'; return; }
+  el.innerHTML = correoList.map(function(row, i){
+    var link = row.enrolled
+      ? ("Vinculado a: " + esc(row.enrolled))
+      : "Aún sin registro con ese nombre — se vinculará cuando se registre";
+    return '<div style="border-bottom:1px solid var(--line);padding:10px 0">'
+      + '<div style="font-weight:700">' + esc(row.display) + '</div>'
+      + '<div class="row" style="margin-top:8px"><input id="correoIn' + i + '" type="email" inputmode="email" placeholder="correo@ejemplo.com" value="' + esc(row.correo || "") + '" style="flex:2;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text)"><button class="btn-primary" style="flex:1;width:auto" onclick="saveCorreoIdx(' + i + ')">Guardar</button><button class="btn-out" style="flex:1;width:auto' + (row.correo ? '' : ';display:none') + '" onclick="delCorreoIdx(' + i + ')" id="correoDel' + i + '">Quitar</button></div>'
+      + '<p class="small muted" style="margin:6px 0 0">' + link + '</p>'
+      + '<p class="small" id="correoErr' + i + '" style="color:var(--red);min-height:1.2em;margin:4px 0"></p>'
+      + '</div>';
+  }).join("");
+}
+function correoToast(msg, ok){
+  var el = document.getElementById("correoToast");
+  if (el){ el.textContent = msg; el.className = "toast show " + (ok ? "ok" : "err"); }
+}
+function setLocalCorreo(nombre, correo){
+  // Reflejar el cambio en la copia local de Correos para que el
+  // re-render no vuelva a mostrar el valor viejo hasta el próximo refresh.
+  if (!(correoRows instanceof Array)) correoRows = [];
+  var found = null;
+  correoRows.forEach(function(c){ if (!found && c && namesLink(c.nombre, nombre)) found = c; });
+  if (correo){
+    if (found) found.correo = correo;
+    else correoRows.push({nombre: nombre, correo: correo});
+  } else if (found){
+    correoRows.splice(correoRows.indexOf(found), 1);
+  }
+}
+function validEmail(c){
+  var at = c.indexOf("@");
+  return at > 0 && c.indexOf(".", at) > at + 1 && c.indexOf(" ") < 0;
+}
+function saveCorreoIdx(i){
+  var row = correoList[i]; if (!row) return;
+  var inp = document.getElementById("correoIn" + i);
+  var correo = inp ? inp.value.trim() : "";
+  var err = document.getElementById("correoErr" + i);
+  if (!validEmail(correo)){ if (err) err.textContent = "Escribe un correo válido (ejemplo: nombre@correo.com)."; return; }
+  if (err) err.textContent = "";
+  sheetsPost({key: SHEETS_KEY, action: "guardar-correo", nombre: row.display, correo: correo}).then(function(res){ return res.json(); }).then(function(data){
+    if (data && data.ok){
+      row.correo = correo;
+      setLocalCorreo(row.display, correo);
+      correoToast("Correo guardado.", true);
+      renderCorreos();
+    } else {
+      correoToast("No se pudo guardar el correo, inténtalo de nuevo.", false);
+    }
+  }).catch(function(){ correoToast("No se pudo guardar el correo, inténtalo de nuevo.", false); });
+}
+function delCorreoIdx(i){
+  var row = correoList[i]; if (!row) return;
+  sheetsPost({key: SHEETS_KEY, action: "borrar-correo", nombre: row.display}).then(function(res){ return res.json(); }).then(function(data){
+    if (data && data.ok){
+      row.correo = "";
+      setLocalCorreo(row.display, "");
+      correoToast("Correo eliminado.", true);
+      renderCorreos();
+    } else {
+      correoToast("No se pudo eliminar el correo, inténtalo de nuevo.", false);
+    }
+  }).catch(function(){ correoToast("No se pudo eliminar el correo, inténtalo de nuevo.", false); });
+}
+function refreshCorreos(){
+  // Si el backend aún no tiene la acción correos (o no hay red), se
+  // muestra la lista con los correos vacíos y Ajustes no se rompe.
+  fetch(SHEETS_URL + "?key=" + encodeURIComponent(SHEETS_KEY) + "&action=correos").then(function(res){ return res.json(); }).then(function(data){
+    if (data && data.ok && data.correos instanceof Array){ correoRows = data.correos; }
+    else { correoRows = []; }
+    renderCorreos();
+  }).catch(function(){ correoRows = []; renderCorreos(); });
+  // Los enlaces dan los nombres inscritos: refrescarlos también alimenta la lista.
+  if (!linkRows) refreshLinks();
 }
 
 /* ---------- Proverbio del día ---------- */
@@ -863,7 +1002,7 @@ function tickClock(){
   document.getElementById("clock").textContent = d.toLocaleTimeString("es-MX",{hour12:false});
   document.getElementById("dateLine").textContent = d.toLocaleDateString("es-MX",{weekday:"long", day:"numeric", month:"long", year:"numeric"});
   renderProverb();
-  if (d.getSeconds() === 0) updateStatus(); // el horario desbloquea solo al llegar la hora (14:00, 15:00 o 18:00)
+  if (d.getSeconds() === 0) updateStatus(); // refresco del estado una vez por minuto
 }
 setInterval(tickClock, 1000); tickClock();
 
@@ -885,20 +1024,18 @@ function setGpsCard(title, cls, msg, showSteps){
   var steps = document.getElementById("gpsSteps");
   if (steps) steps.classList.toggle("hidden", !showSteps);
 }
-/* ---------- Registros de hoy + horario del día (v1.11.1) ---------- */
-/* La jornada tiene 4 pasos: Entrada en la mañana, Salida de comida entre
-   las 14:00 y las 15:00, Entrada a las 15:00 y Salida final a las 18:00.
-   La tarjeta "Mis registros de hoy" solo muestra los registros de HOY del
-   empleado de este celular (por fecha local); nada de días anteriores se
-   acumula, cada día empieza de cero. Cada fila se llena por TIPO + HORA
-   (no por orden): así los registros de prueba y los duplicados no llenan
-   la fila equivocada. La fase del día se saca de las filas llenas, no del
-   conteo de registros: un conteo alto por pruebas ya no bloquea la salida
-   de comida. Si ningún paso válido está lleno pero sí hay registros de hoy
-   (pruebas, primera entrada tardía), la fase se decide por el último
-   registro: nunca se deja a nadie atrapado sin poder registrar. El
-   horario se aplica con los registros LOCALES del celular, sin llamadas
-   al servidor. Todas las horas se muestran en 24 h (14:00, nunca en 12 h). */
+/* ---------- Registros de hoy + alternancia Entrada/Salida (v1.13) ---------- */
+/* Ya NO hay bloqueo por horario: no hay ventana de comida ni hora de salida
+   final. La única regla es la alternancia: tras una Entrada solo se puede
+   registrar una Salida, y tras una Salida solo una Entrada. Se decide por el
+   ÚLTIMO registro de HOY del empleado de este celular (por fecha local);
+   nada de días anteriores cuenta. La tarjeta "Mis registros de hoy" solo
+   muestra los registros de HOY, cada día empieza de cero, y las filas se
+   llenan EN ORDEN (1er registro -> fila 1, 2do -> fila 2, etc.), sin
+   emparejar por tipo+hora. El aviso (letrero) siempre dice cuál es el
+   siguiente registro que toca. La regla se aplica con los registros LOCALES
+   del celular, sin llamadas al servidor, y vale para TODOS, RH incluidos.
+   Todas las horas se muestran en 24 h (14:00, nunca en 12 h). */
 function todayRecords(){
   var me = currentEmployee();
   var now = new Date();
@@ -910,111 +1047,45 @@ function todayRecords(){
   }).sort(function(a, b){ return a.when - b.when; });
 }
 function fmtTime(d){ return d.toLocaleTimeString("es-MX", {hour: "2-digit", minute: "2-digit", hour12: false}); }
-/* Cada paso de la jornada se llena por tipo + hora (v1.11.1): */
-function daySlots(){
+/* Alternancia Entrada/Salida (v1.13): la única regla. Sin registros hoy
+   solo se puede entrar; tras una Entrada solo se puede salir; tras una
+   Salida solo se puede entrar. Vale para TODOS, RH incluidos. El aviso
+   (notice) siempre dice cuál es el siguiente registro que toca. */
+function alternationGate(){
   var recs = todayRecords();
-  function earliest(type, minH, maxH, after){
-    var best = null;
-    for (var i = 0; i < recs.length; i++){
-      var r = recs[i];
-      if (!r || r.type !== type) continue;
-      var h = r.when.getHours() + r.when.getMinutes() / 60;
-      if (h < minH) continue;
-      if (maxH != null && h >= maxH) continue;
-      if (after && !(r.when > after)) continue;
-      if (!best || r.when < best.when) best = r;
-    }
-    return best;
-  }
-  var row1 = earliest("Entrada", 0, 15, null); // mañana: Entrada antes de las 15:00
-  var row2 = earliest("Salida", 14, null, row1 ? row1.when : null); // comida: Salida desde las 14:00
-  var row3 = earliest("Entrada", 15, null, row2 ? row2.when : null); // regreso: Entrada desde las 15:00
-  var row4 = earliest("Salida", 18, null, row3 ? row3.when : null); // final: Salida desde las 18:00
-  return {row1: row1, row2: row2, row3: row3, row4: row4, recs: recs};
-}
-/* v1.11.2: RH sin bloqueo de horario de ningún tipo. Se usa el mismo
-   match de admin (prefijo, lista central de RH) que muestra las pestañas
-   Historial/Ajustes; no se pide que el PIN esté desbloqueado. Sin alta
-   (enrollment null) no hay usuario que revisar, así que no hay bypass. */
-function isRhBypass(){ return !!enrollment && isAdmin(currentEmployee()); }
-function scheduleGate(now){
-  now = now || new Date();
-  // RH: sin bloqueo de ningún tipo — ambos botones siempre permitidos,
-  // sin línea de horario ni "Jornada completa". Solo se quita el bloqueo
-  // de horario; la decisión dentro/fuera (WiFi/GPS/foto) no cambia.
-  if (isRhBypass()) return {allowedIn: true, allowedOut: true, done: false, blockMsg: ""};
-  var slots = daySlots();
-  // Fase por filas llenas (pasos válidos), no por conteo de registros.
-  if (slots.row4){
-    return {allowedIn: false, allowedOut: false, done: true, blockMsg: "Jornada completa: ya registraste tu salida final de hoy."};
-  }
-  if (slots.row3){ // ya entró de regreso: solo falta la salida final desde las 18:00
-    var openFinal = now.getHours() >= 18;
-    return {allowedIn: false, allowedOut: openFinal, done: false,
-      blockMsg: openFinal ? "" : "Próximo registro: salida final a las 18:00."};
-  }
-  if (slots.row2){ // ya salió a comer: la entrada de regreso desde las 15:00
-    var openReturn = now.getHours() >= 15;
-    return {allowedIn: openReturn, allowedOut: false, done: false,
-      blockMsg: openReturn ? "" : "Próximo registro: entrada a las 15:00."};
-  }
-  if (slots.row1){ // ya entró en la mañana: salida de comida entre las 14:00 y las 15:00;
-    // si pasan las 15:00 y aún no la marcó, sigue permitida (comida tarde)
-    var openLunch = now.getHours() >= 14;
-    return {allowedIn: false, allowedOut: openLunch, done: false,
-      blockMsg: openLunch ? "" : "Próximo registro: salida de comida entre las 14:00 y las 15:00."};
-  }
-  // Ningún paso válido lleno: hay registros de hoy que no encajan en ningún
-  // paso (pruebas, primera entrada tardía). No atrapar a nadie: se decide
-  // por el último registro (tipo + hora), igual que la fase de arriba.
-  var recs = slots.recs;
-  if (!recs.length) return {allowedIn: true, allowedOut: false, done: false, blockMsg: ""};
+  if (!recs.length) return {allowedIn: true, allowedOut: false, notice: "Registra tu entrada para empezar el día."};
   var last = recs[recs.length - 1];
-  var lh = last.when.getHours() + last.when.getMinutes() / 60;
-  if (last.type === "Entrada" && lh < 15){
-    var o1 = now.getHours() >= 14;
-    return {allowedIn: false, allowedOut: o1, done: false,
-      blockMsg: o1 ? "" : "Próximo registro: salida de comida entre las 14:00 y las 15:00."};
-  }
-  if (last.type === "Entrada"){ // Entrada a las 15:00 o después: regreso
-    var o2 = now.getHours() >= 18;
-    return {allowedIn: false, allowedOut: o2, done: false,
-      blockMsg: o2 ? "" : "Próximo registro: salida final a las 18:00."};
-  }
-  if (last.type === "Salida" && lh < 18){ // salida de comida: regreso desde las 15:00
-    var o3 = now.getHours() >= 15;
-    return {allowedIn: o3, allowedOut: false, done: false,
-      blockMsg: o3 ? "" : "Próximo registro: entrada a las 15:00."};
-  }
-  return {allowedIn: false, allowedOut: false, done: true, blockMsg: "Jornada completa: ya registraste tu salida final de hoy."};
+  if (last.type === "Entrada") return {allowedIn: false, allowedOut: true, notice: "Ya registraste tu entrada. Ahora registra tu salida para poder entrar de nuevo."};
+  return {allowedIn: true, allowedOut: false, notice: "Ya registraste tu salida. Ahora puedes registrar tu entrada."};
 }
 function renderTodayCard(){
   var rowsEl = document.getElementById("todayRows");
   if (!rowsEl) return;
-  var slots = daySlots();
-  var rows = [slots.row1, slots.row2, slots.row3, slots.row4];
+  var recs = todayRecords(); // hoy, en orden cronológico
   var html = "";
   for (var i = 0; i < DAY_SLOTS.length; i++){
     var slot = DAY_SLOTS[i];
-    var r = rows[i];
+    var r = recs[i]; // llenado EN ORDEN: 1er registro -> fila 1, 2do -> fila 2...
+    var sub = slot.sub ? ' <span class="muted">· ' + esc(slot.sub) + '</span>' : '';
     if (r){
-      html += '<div class="today-row"><span><b>' + esc(slot.label) + '</b> <span class="muted">· ' + esc(slot.sub) + '</span></span><span class="done">' + esc(fmtTime(r.when)) + ' · ' + (r.inside ? "En oficina" : "Fuera") + '</span></div>';
+      html += '<div class="today-row"><span><b>' + esc(slot.label) + '</b>' + sub + '</span><span class="done">' + esc(fmtTime(r.when)) + ' · ' + (r.inside ? "En oficina" : "Fuera") + '</span></div>';
     } else {
-      html += '<div class="today-row"><span><b>' + esc(slot.label) + '</b> <span class="muted">· ' + esc(slot.sub) + '</span></span><span class="pend">Pendiente</span></div>';
+      html += '<div class="today-row"><span><b>' + esc(slot.label) + '</b>' + sub + '</span><span class="pend">Pendiente</span></div>';
     }
   }
-  // Registros de hoy que no llenan ningún paso (pruebas, duplicados): se
-  // muestran como filas extra, sin romper la tarjeta ni el horario.
-  slots.recs.forEach(function(x){
-    if (rows.indexOf(x) >= 0) return;
+  // Registros de hoy más allá de las 4 filas: se muestran como filas
+  // extra, sin romper la tarjeta.
+  for (var j = DAY_SLOTS.length; j < recs.length; j++){
+    var x = recs[j];
     html += '<div class="today-row"><span><b>' + esc(x.type) + '</b></span><span class="done">' + esc(fmtTime(x.when)) + ' · ' + (x.inside ? "En oficina" : "Fuera") + '</span></div>';
-  });
+  }
   rowsEl.innerHTML = html;
+  // Letrero (aviso) siempre visible: dice cuál es el siguiente registro
+  // que toca según la alternancia.
   var line = document.getElementById("scheduleLine");
   if (line){
-    var gate = scheduleGate();
-    line.textContent = gate.blockMsg;
-    line.style.display = gate.blockMsg ? "" : "none";
+    line.textContent = alternationGate().notice;
+    line.style.display = "";
   }
 }
 function updateStatus(){
@@ -1055,12 +1126,11 @@ function updateStatus(){
     document.getElementById("btnOut").textContent = "Registrar salida";
     document.getElementById("btnConfirmPhoto").classList.toggle("hidden", !(needPhoto && photoDataUrl));
   }
-  // Horario del día (v1.11.1): los botones solo permiten el paso que toca
-  // según los registros de hoy y la hora local. Nunca habilita un botón
-  // que la ubicación/foto ya tenía bloqueado, solo puede bloquear más.
-  // RH (v1.11.2) no tiene bloqueo: scheduleGate() ya devuelve ambos
-  // permitidos para RH, así que esto no les bloquea nada.
-  var gate = scheduleGate();
+  // Alternancia Entrada/Salida (v1.13): solo se permite el registro que
+  // toca según el último registro de hoy. Nunca habilita un botón que la
+  // ubicación/foto ya tenía bloqueado, solo puede bloquear más. Vale para
+  // todos, RH incluidos.
+  var gate = alternationGate();
   document.getElementById("btnIn").disabled = document.getElementById("btnIn").disabled || !gate.allowedIn;
   document.getElementById("btnOut").disabled = document.getElementById("btnOut").disabled || !gate.allowedOut;
   renderTodayCard();
@@ -1351,11 +1421,9 @@ function refreshBeforeRegister(btnId){
 }
 async function tryRegister(type){
   if (registering) return;
-  var gate0 = scheduleGate();
-  // v1.11.2: RH sin bloqueo (el gate ya lo devuelve permitido; el chequeo
-  // explícito es defensa por si el gate cambia alguna vez).
-  if (!isRhBypass() && ((type === "Entrada" && !gate0.allowedIn) || (type === "Salida" && !gate0.allowedOut))){
-    showToast(gate0.blockMsg || "Este registro todavía no está disponible según el horario del día.", false);
+  var gate0 = alternationGate();
+  if ((type === "Entrada" && !gate0.allowedIn) || (type === "Salida" && !gate0.allowedOut)){
+    showToast(type === "Entrada" ? "Ya registraste tu entrada. Primero registra tu salida." : "Todavía no registraste tu entrada. Primero registra tu entrada.", false);
     updateStatus();
     return;
   }
@@ -1370,9 +1438,9 @@ async function tryRegister(type){
 }
 function doConfirmPhotoRegister(){
   var type = pendingType || "Entrada";
-  var gate0 = scheduleGate();
-  if (!isRhBypass() && ((type === "Entrada" && !gate0.allowedIn) || (type === "Salida" && !gate0.allowedOut))){
-    showToast(gate0.blockMsg || "Este registro todavía no está disponible según el horario del día.", false);
+  var gate0 = alternationGate();
+  if ((type === "Entrada" && !gate0.allowedIn) || (type === "Salida" && !gate0.allowedOut)){
+    showToast(type === "Entrada" ? "Ya registraste tu entrada. Primero registra tu salida." : "Todavía no registraste tu entrada. Primero registra tu entrada.", false);
     updateStatus();
     return;
   }
@@ -1389,9 +1457,10 @@ function doConfirmPhotoRegister(){
 }
 async function confirmPhotoRegister(){
   if (registering) return;
-  var gate0 = scheduleGate();
-  if (!isRhBypass() && !gate0.allowedIn && !gate0.allowedOut){
-    showToast(gate0.blockMsg || "Este registro todavía no está disponible según el horario del día.", false);
+  var gate0 = alternationGate();
+  var t = pendingType || "Entrada";
+  if ((t === "Entrada" && !gate0.allowedIn) || (t === "Salida" && !gate0.allowedOut)){
+    showToast(t === "Entrada" ? "Ya registraste tu entrada. Primero registra tu salida." : "Todavía no registraste tu entrada. Primero registra tu entrada.", false);
     updateStatus();
     return;
   }
@@ -1507,7 +1576,7 @@ function goTab(tab){
   document.getElementById("adjLocked").classList.toggle("hidden", unlocked);
   document.getElementById("adjContent").classList.toggle("hidden", !unlocked);
   if (tab === "historial" && unlocked) fetchCentralHistory();
-  if (tab === "ajustes" && unlocked) refreshLinks();
+  if (tab === "ajustes" && unlocked){ refreshLinks(); refreshCorreos(); }
   if (isAdm && !unlocked) openPin(name);
 }
 function openPin(name){
