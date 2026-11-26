@@ -932,8 +932,17 @@ function daySlots(){
   var row4 = earliest("Salida", 18, null, row3 ? row3.when : null); // final: Salida desde las 18:00
   return {row1: row1, row2: row2, row3: row3, row4: row4, recs: recs};
 }
+/* v1.11.2: RH sin bloqueo de horario de ningún tipo. Se usa el mismo
+   match de admin (prefijo, lista central de RH) que muestra las pestañas
+   Historial/Ajustes; no se pide que el PIN esté desbloqueado. Sin alta
+   (enrollment null) no hay usuario que revisar, así que no hay bypass. */
+function isRhBypass(){ return !!enrollment && isAdmin(currentEmployee()); }
 function scheduleGate(now){
   now = now || new Date();
+  // RH: sin bloqueo de ningún tipo — ambos botones siempre permitidos,
+  // sin línea de horario ni "Jornada completa". Solo se quita el bloqueo
+  // de horario; la decisión dentro/fuera (WiFi/GPS/foto) no cambia.
+  if (isRhBypass()) return {allowedIn: true, allowedOut: true, done: false, blockMsg: ""};
   var slots = daySlots();
   // Fase por filas llenas (pasos válidos), no por conteo de registros.
   if (slots.row4){
@@ -1049,6 +1058,8 @@ function updateStatus(){
   // Horario del día (v1.11.1): los botones solo permiten el paso que toca
   // según los registros de hoy y la hora local. Nunca habilita un botón
   // que la ubicación/foto ya tenía bloqueado, solo puede bloquear más.
+  // RH (v1.11.2) no tiene bloqueo: scheduleGate() ya devuelve ambos
+  // permitidos para RH, así que esto no les bloquea nada.
   var gate = scheduleGate();
   document.getElementById("btnIn").disabled = document.getElementById("btnIn").disabled || !gate.allowedIn;
   document.getElementById("btnOut").disabled = document.getElementById("btnOut").disabled || !gate.allowedOut;
@@ -1341,7 +1352,9 @@ function refreshBeforeRegister(btnId){
 async function tryRegister(type){
   if (registering) return;
   var gate0 = scheduleGate();
-  if ((type === "Entrada" && !gate0.allowedIn) || (type === "Salida" && !gate0.allowedOut)){
+  // v1.11.2: RH sin bloqueo (el gate ya lo devuelve permitido; el chequeo
+  // explícito es defensa por si el gate cambia alguna vez).
+  if (!isRhBypass() && ((type === "Entrada" && !gate0.allowedIn) || (type === "Salida" && !gate0.allowedOut))){
     showToast(gate0.blockMsg || "Este registro todavía no está disponible según el horario del día.", false);
     updateStatus();
     return;
@@ -1358,7 +1371,7 @@ async function tryRegister(type){
 function doConfirmPhotoRegister(){
   var type = pendingType || "Entrada";
   var gate0 = scheduleGate();
-  if ((type === "Entrada" && !gate0.allowedIn) || (type === "Salida" && !gate0.allowedOut)){
+  if (!isRhBypass() && ((type === "Entrada" && !gate0.allowedIn) || (type === "Salida" && !gate0.allowedOut))){
     showToast(gate0.blockMsg || "Este registro todavía no está disponible según el horario del día.", false);
     updateStatus();
     return;
@@ -1377,7 +1390,7 @@ function doConfirmPhotoRegister(){
 async function confirmPhotoRegister(){
   if (registering) return;
   var gate0 = scheduleGate();
-  if (!gate0.allowedIn && !gate0.allowedOut){
+  if (!isRhBypass() && !gate0.allowedIn && !gate0.allowedOut){
     showToast(gate0.blockMsg || "Este registro todavía no está disponible según el horario del día.", false);
     updateStatus();
     return;
