@@ -96,12 +96,6 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
         <div style="margin-top:10px"><button class="btn-primary" onclick="submitEnrollName()">Registrar este celular</button></div>
         <p class="small muted" style="margin:8px 0 0">Con tu nombre este celular queda registrado solo para ti: después ya no se podrá checar por otra persona desde aquí.</p>
       </div>
-      <label class="flabel" for="rhNameSel">¿Eres de RH?</label>
-      <div class="row">
-        <select id="rhNameSel" style="flex:2"></select>
-        <button class="btn-out" style="flex:1" onclick="openRhGate()">Soy RH</button>
-      </div>
-      <p class="small muted">RH puede abrir Ajustes con su PIN para generar los enlaces personales.</p>
     </div>
     <div id="checarMain">
     <div class="card">
@@ -184,6 +178,7 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
         <div class="kv"><span class="muted">Radio permitido</span><b>50 m</b></div>
         <div class="kv"><span class="muted">Precisión máxima para guardar</span><b>±50 m</b></div>
         <div class="kv"><span class="muted">Guardado</span><b id="officeSaved">—</b></div>
+        <p class="small muted" id="officeSource" style="margin:6px 0 0"></p>
         <p class="small muted">El punto queda guardado para siempre en este dispositivo, aunque cierres la app. RH lo puede cambiar cuando quiera volviendo a guardar aquí. Para guardar el punto, párate en la puerta de la oficina, verifica el GPS y toca el botón. Si tu precisión es mayor a ±50 m, <b>no se guarda</b>: acércate a una ventana o sal un momento y vuelve a verificar.</p>
         <button class="btn-primary" onclick="saveOfficePoint()">Guardar mi ubicación actual como puerta de la oficina</button>
         <div class="toast" id="officeToast"></div>
@@ -223,6 +218,12 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
         </div>
         <p class="small" id="empErr" style="color:var(--red);min-height:1.2em;margin:4px 0"></p>
         <p class="small muted">RH (🔒) ve Historial y Ajustes con su PIN. Todos los demás solo se registran.</p>
+      </div>
+      <div class="card">
+        <h2>Roles RH</h2>
+        <p class="small muted" style="margin:0 0 8px">Quién puede ver Historial y Ajustes con su PIN. Los cambios se guardan en la hoja y aplican en todos los celulares.</p>
+        <div id="rhList"></div>
+        <p class="small" id="rhErr" style="color:var(--red);min-height:1.2em;margin:4px 0"></p>
       </div>
       <div class="card">
         <h2>Enlaces personales de alta</h2>
@@ -265,6 +266,9 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
 <script>
 var RADIUS = 50, MAX_ACC = 50;
 var ADMINS = ["keiji andres henao bayon","norma mariscal","mara henao"];
+var rhList = null; // lista RH central (de la hoja); null = usar ADMINS
+var centralConfig = null; // última config central leída (cadenas)
+var centralConfigLoaded = false; // true cuando ya se leyó la config central (aunque falle)
 var employees = ["keiji andres henao bayon","Norma Mariscal","Mara Henao","Samuel Flores"];
 var office = null; // {lat, lon} — se fija parado en la puerta, desde Ajustes
 var records = [];  // registros de ESTE dispositivo, solo en memoria de la sesión
@@ -317,6 +321,60 @@ function sheetsPost(payload){
   return fetch(SHEETS_URL, {method: "POST", headers: {"Content-Type": "text/plain"}, body: JSON.stringify(payload)});
 }
 
+/* ---------- Config central (Google Sheets): punto, IPs y roles RH ---------- */
+/* El punto de la oficina, las IPs y la lista de RH viven en la pestaña
+   "Config" de la hoja. Cada celular descarga esa config al abrir la app;
+   el punto y las IPs locales de cada celular se conservan (el punto local
+   manda sobre el central, y las IPs se unen). Así un empleado nuevo ya
+   puede registrar en oficina sin que RH configure su celular a mano. */
+function fetchCentralConfig(){
+  fetch(SHEETS_URL + "?key=" + encodeURIComponent(SHEETS_KEY) + "&action=config").then(function(res){ return res.json(); }).then(function(data){
+    if (data && data.ok && data.config){ centralConfig = data.config; applyCentralConfig(data.config); }
+    centralConfigLoaded = true;
+  }).catch(function(){ centralConfigLoaded = true; });
+}
+function applyCentralConfig(cfg){
+  var clat = parseFloat(cfg.officeLat), clon = parseFloat(cfg.officeLon);
+  var hasCentralOffice = isFinite(clat) && isFinite(clon);
+  if (hasCentralOffice && !office){
+    office = {lat: clat, lon: clon, savedAt: cfg.officeSavedAt || null, fromCentral: true};
+    persistOffice();
+  }
+  var centralIps = String(cfg.officeIps || "").split(",").map(function(s){ return s.trim(); }).filter(function(s){ return s; });
+  var changed = false;
+  centralIps.forEach(function(ip){ if (officeIPs.indexOf(ip) < 0){ officeIPs.push(ip); changed = true; } });
+  if (changed) persistIPs();
+  var rh = String(cfg.rhNames || "").split(",").map(function(s){ return s.trim(); }).filter(function(s){ return s; });
+  rhList = rh.length ? rh : null;
+  // Si la hoja aún no tiene punto y este celular es de RH con punto local,
+  // subirlo una vez para que todos los demás lo descarguen.
+  if (!hasCentralOffice && office && enrollment && isAdmin(currentEmployee())){
+    pushCentralConfig();
+  }
+  if (currentIP) ipInOffice = officeIPs.indexOf(currentIP) >= 0;
+  fillEmployees();
+  renderOfficeState();
+  updateStatus();
+}
+function pushCentralConfig(){
+  // Sube la config actual (punto + IPs + roles RH) a la hoja. Si el punto
+  // local no existe, se conserva el central ya conocido para no borrarlo.
+  function doPush(){
+    var lat = "", lon = "", savedAt = "";
+    if (office){ lat = String(office.lat); lon = String(office.lon); savedAt = office.savedAt || ""; }
+    else if (centralConfig){ lat = centralConfig.officeLat || ""; lon = centralConfig.officeLon || ""; savedAt = centralConfig.officeSavedAt || ""; }
+    var payload = {key: SHEETS_KEY, action: "save-config", officeLat: lat, officeLon: lon, officeSavedAt: savedAt, officeIps: officeIPs.join(","), rhNames: getRhList().join(",")};
+    try { fetch(SHEETS_URL, {method: "POST", headers: {"Content-Type": "text/plain"}, body: JSON.stringify(payload)}).catch(function(){}); } catch(e){}
+  }
+  if (centralConfigLoaded || office){ doPush(); return; }
+  // Aún no se ha leído la config central: leerla primero para no borrar
+  // un punto central que ya exista.
+  fetch(SHEETS_URL + "?key=" + encodeURIComponent(SHEETS_KEY) + "&action=config").then(function(res){ return res.json(); }).then(function(data){
+    if (data && data.ok && data.config) centralConfig = data.config;
+    centralConfigLoaded = true; doPush();
+  }).catch(function(){ centralConfigLoaded = true; doPush(); });
+}
+
 /* ---------- Persistencia: todo queda guardado en este dispositivo ---------- */
 /* localStorage sobrevive a cerrar la app. Si no está disponible (modo privado,
    WebView sin almacenamiento), todo sigue funcionando solo en memoria. */
@@ -333,7 +391,7 @@ function lsGet(key){
   try { var v = localStorage.getItem(key); return v == null ? null : JSON.parse(v); }
   catch(e){ return null; }
 }
-function persistOffice(){ if (office) lsSet(LS_OFFICE, {lat: office.lat, lon: office.lon, savedAt: office.savedAt || new Date().toISOString()}); }
+function persistOffice(){ if (office) lsSet(LS_OFFICE, {lat: office.lat, lon: office.lon, savedAt: office.savedAt || new Date().toISOString(), fromCentral: !!office.fromCentral}); }
 function persistIPs(){ lsSet(LS_IPS, officeIPs); }
 function persistEmployees(){ lsSet(LS_EMP, employees); }
 function persistPins(){ lsSet(LS_PINS, adminPins); }
@@ -348,7 +406,7 @@ function persistRecordsSafe(){
 }
 function restorePersisted(){
   var o = lsGet(LS_OFFICE);
-  if (o && typeof o.lat === "number" && typeof o.lon === "number") office = {lat: o.lat, lon: o.lon, savedAt: o.savedAt || null};
+  if (o && typeof o.lat === "number" && typeof o.lon === "number") office = {lat: o.lat, lon: o.lon, savedAt: o.savedAt || null, fromCentral: !!o.fromCentral};
   var ips = lsGet(LS_IPS);
   if (ips && ips instanceof Array) officeIPs = ips.filter(function(x){ return typeof x === "string" && x; });
   var emps = lsGet(LS_EMP);
@@ -375,6 +433,8 @@ function renderOfficeState(){
     co.textContent = "—";
     if (sv) sv.textContent = "—";
   }
+  var src = document.getElementById("officeSource");
+  if (src) src.textContent = (office && office.fromCentral) ? "Punto central (de la hoja): todos los celulares usan este mismo punto." : "";
 }
 restorePersisted();
 var ipInOffice = false;
@@ -390,16 +450,19 @@ function locSourceLabel(src){
 
 function norm(s){ return (s||"").trim().toLowerCase(); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+function getRhList(){ return (rhList && rhList.length) ? rhList : ADMINS; }
 function adminMatch(name){
   // Un nombre cuenta como RH si es el nombre completo del admin o un
   // prefijo suyo (p. ej. "keiji", "keiji andres henao"), o si el nombre
   // escrito empieza por el nombre completo del admin. Un nombre que solo
   // lo contiene en medio ("xkeiji") no cuenta. Devuelve el nombre
-  // completo del admin, o null si no coincide con ninguno.
+  // completo del admin, o null si no coincide con ninguno. La lista
+  // consultada es la central (de la hoja) cuando existe; si no, ADMINS.
   var n = norm(name);
   if (!n) return null;
-  for (var i = 0; i < ADMINS.length; i++){
-    var a = ADMINS[i];
+  var list = getRhList();
+  for (var i = 0; i < list.length; i++){
+    var a = norm(list[i]);
     if (n === a || a.indexOf(n) === 0 || n.indexOf(a) === 0) return a;
   }
   return null;
@@ -417,19 +480,20 @@ function fillEmployees(){
   });
   if (enrollment && employees.indexOf(enrollment.empleado) >= 0) sel.value = enrollment.empleado;
   else if (cur && employees.indexOf(cur) >= 0) sel.value = cur;
-  var rhIds = ["rhNameSel","rhNameSel2"];
+  var rhIds = ["rhNameSel2"];
   rhIds.forEach(function(id){
     var rh = document.getElementById(id);
     if (rh){ rh.innerHTML = ""; employees.filter(function(e){ return isAdmin(e); }).forEach(function(e){ var o = document.createElement("option"); o.value = e; o.textContent = e; rh.appendChild(o); }); }
   });
   onEmployeeChange(true);
   renderEmpList();
+  renderRhRoles();
   renderIpList();
   renderOfficeState();
 }
 function updateTabsVisibility(){
-  // Sin alta, nadie ve Historial/Ajustes por el selector: solo el dueño
-  // del celular (si es RH) o RH desbloqueado con PIN desde la pantalla de alta.
+  // Sin alta, nadie ve Historial/Ajustes: solo el dueño del celular
+  // (si es RH) o RH desbloqueado con PIN desde la vista Checar.
   var show = (!!enrollment && isAdmin(currentEmployee())) || !!unlockedFor;
   document.getElementById("tab-historial").style.display = show ? "" : "none";
   document.getElementById("tab-ajustes").style.display = show ? "" : "none";
@@ -519,6 +583,44 @@ function addEmployee(){
   employees.push(v); persistEmployees(); inp.value=""; fillEmployees();
 }
 
+/* ---------- Roles RH (Ajustes, solo RH): quién es RH se controla aquí ---------- */
+function roleNames(){
+  var names = employees.slice();
+  getRhList().forEach(function(a){
+    if (!names.some(function(e){ return norm(e) === norm(a); })) names.push(a);
+  });
+  return names;
+}
+function renderRhRoles(){
+  var el = document.getElementById("rhList"); if (!el) return;
+  el.innerHTML = roleNames().map(function(n, i){
+    return '<label class="kv" style="cursor:pointer"><span>' + esc(n) + '</span><span><input type="checkbox" ' + (isAdmin(n) ? "checked" : "") + ' onchange="onRhToggleIdx(' + i + ', this.checked)"> Es RH</span></label>';
+  }).join("");
+}
+function rhErr(msg){ var el = document.getElementById("rhErr"); if (el) el.textContent = msg || ""; }
+function onRhToggleIdx(i, checked){
+  var names = roleNames();
+  var name = names[i];
+  if (!name) return;
+  var canonical = adminMatch(name); // nombre completo del admin, si lo es
+  if (!checked){
+    var remaining = getRhList().filter(function(a){ return norm(a) !== norm(canonical || name); });
+    if (!remaining.length){ rhErr("No se puede quitar el último RH."); renderRhRoles(); return; }
+    if (unlockedFor && canonical && norm(unlockedFor) === norm(canonical)){ rhErr("No puedes quitarte el rol de RH mientras estás usando Ajustes."); renderRhRoles(); return; }
+    rhList = remaining;
+  } else {
+    var current = getRhList().slice();
+    var nn = norm(name);
+    if (!current.some(function(a){ return norm(a) === nn; })) current.push(nn);
+    rhList = current;
+  }
+  rhErr("");
+  pushCentralConfig();
+  fillEmployees();
+  renderRhRoles();
+  updateTabsVisibility();
+}
+
 /* ---------- Alta personal ---------- */
 function applyEnrollmentUI(){
   var enrolled = !!enrollment;
@@ -582,7 +684,6 @@ function submitEnrollName(){
     }
   }).catch(function(){ setEnrollStatus("Sin conexión: abre el enlace de nuevo cuando tengas internet.", false); });
 }
-function openRhGate(){ openRhGateFor("rhNameSel"); }
 function openRhGate2(){ openRhGateFor("rhNameSel2"); }
 function openRhGateFor(id){
   var sel = document.getElementById(id);
@@ -812,6 +913,7 @@ function saveCurrentIP(){
   if (!currentIP){ fetchIP(); if (t){ t.textContent = "Todavía no se detectó tu IP, espera unos segundos y vuelve a intentar."; t.className = "toast show err"; } return; }
   if (officeIPs.indexOf(currentIP) < 0) officeIPs.push(currentIP);
   persistIPs();
+  pushCentralConfig();
   ipInOffice = true;
   renderIpList(); updateStatus();
   if (t){ t.textContent = "✅ IP " + currentIP + " guardada como IP de oficina."; t.className = "toast show ok"; }
@@ -821,6 +923,7 @@ function saveCurrentIP(){
 function removeIp(i){
   officeIPs.splice(i, 1);
   persistIPs();
+  pushCentralConfig();
   ipInOffice = currentIP ? officeIPs.indexOf(currentIP) >= 0 : false;
   renderIpList(); updateStatus();
 }
@@ -906,7 +1009,7 @@ async function startGpsCheck(manual, isAuto){
   }
   updateStatus();
 }
-document.addEventListener("visibilitychange", function(){ if(!document.hidden && gpsState !== "ok") startGpsCheck(false); });
+document.addEventListener("visibilitychange", function(){ if(!document.hidden){ fetchCentralConfig(); if(gpsState !== "ok") startGpsCheck(false); } });
 
 /* ---------- Foto ---------- */
 function onPhoto(ev){
@@ -1065,6 +1168,7 @@ function goTab(tab){
     document.getElementById("view-checar").classList.remove("hidden");
     document.getElementById("view-historial").classList.add("hidden");
     document.getElementById("view-ajustes").classList.add("hidden");
+    fetchCentralConfig();
     retryUnsynced();
     return;
   }
@@ -1116,8 +1220,9 @@ function saveOfficePoint(){
   function fail(m){ t.textContent = m; t.className = "toast show err"; }
   if (!pos){ fail("Todavía no hay ubicación. Ve a Checar y toca «Volver a verificar» hasta que el GPS responda."); return; }
   if (pos.acc > MAX_ACC){ fail("⛔ No se guardó: tu precisión es de ±" + Math.round(pos.acc) + " m y el máximo para guardar es ±50 m. Acércate a una ventana o sal un momento y vuelve a verificar."); return; }
-  office = {lat: pos.lat, lon: pos.lon, savedAt: new Date().toISOString()};
+  office = {lat: pos.lat, lon: pos.lon, savedAt: new Date().toISOString(), fromCentral: false};
   persistOffice();
+  pushCentralConfig();
   renderOfficeState();
   t.textContent = "✅ Punto de la oficina guardado para siempre en este dispositivo (RH lo puede cambiar cuando quiera) con precisión de ±" + Math.round(pos.acc) + " m. Radio: 50 m.";
   t.className = "toast show ok";
@@ -1129,6 +1234,7 @@ applyEnrollmentUI();
 processAlta();
 renderHistory();
 updateStatus();
+fetchCentralConfig();
 startGpsCheck(false);
 retryUnsynced();
 </script>
