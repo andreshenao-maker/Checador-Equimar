@@ -199,6 +199,7 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
       <div class="card">
         <h2>Empleados</h2>
         <div id="empList"></div>
+        <p class="small" id="empErr" style="color:var(--red);min-height:1.2em;margin:4px 0"></p>
         <label class="flabel" for="newEmp">Agregar empleado</label>
         <div class="row">
           <input id="newEmp" type="text" placeholder="Nombre completo" style="flex:2;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text)">
@@ -426,11 +427,37 @@ function onEmployeeChange(keep){
   if (!keep && unlockedFor && norm(unlockedFor) !== norm(name)) unlockedFor = null;
   updateTabsVisibility();
 }
+var editingEmpIdx = -1; // fila de empleado en edición (-1 = ninguna)
 function renderEmpList(){
   var el = document.getElementById("empList"); if(!el) return;
-  el.innerHTML = employees.map(function(e){
-    return '<div class="kv"><span>' + esc(e) + '</span><b>' + (isAdmin(e) ? "🔒 RH" : "Empleado") + '</b></div>';
+  el.innerHTML = employees.map(function(e, i){
+    // Los admins no se pueden editar ni eliminar: sus nombres los fija ADMINS.
+    if (isAdmin(e)) return '<div class="kv"><span>' + esc(e) + '</span><b>🔒 RH</b></div>';
+    if (editingEmpIdx === i){
+      return '<div class="kv"><input id="editEmpInput" type="text" value="' + esc(e) + '" style="flex:2;min-width:0;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text)"><span style="display:flex;gap:6px"><button class="btn-primary" style="width:auto;padding:8px 10px" onclick="saveEditEmp(' + i + ')">Guardar</button><button class="btn-out" style="width:auto;padding:8px 10px" onclick="cancelEditEmp()">Cancelar</button></span></div>';
+    }
+    return '<div class="kv"><span>' + esc(e) + '</span><span style="display:flex;gap:6px;align-items:center"><b>Empleado</b><button class="btn-out" style="width:auto;padding:6px 10px" onclick="startEditEmp(' + i + ')">Editar</button><button class="btn-out" style="width:auto;padding:6px 10px" onclick="deleteEmp(' + i + ')">Eliminar</button></span></div>';
   }).join("");
+}
+function empErr(msg){ var el = document.getElementById("empErr"); if (el) el.textContent = msg || ""; }
+function startEditEmp(i){
+  if (!employees[i] || isAdmin(employees[i])) return;
+  editingEmpIdx = i; empErr(""); renderEmpList();
+  var inp = document.getElementById("editEmpInput"); if (inp){ inp.focus(); inp.select(); }
+}
+function cancelEditEmp(){ editingEmpIdx = -1; empErr(""); renderEmpList(); }
+function saveEditEmp(i){
+  var inp = document.getElementById("editEmpInput"); if (!inp) return;
+  var v = inp.value.trim();
+  if (v.length < 3){ empErr("El nombre debe tener al menos 3 caracteres."); return; }
+  if (employees.some(function(e, j){ return j !== i && norm(e) === norm(v); })){ empErr("Ese nombre ya está en la lista."); return; }
+  employees[i] = v; editingEmpIdx = -1; empErr(""); persistEmployees(); fillEmployees();
+}
+function deleteEmp(i){
+  var name = employees[i]; if (!name || isAdmin(name)) return;
+  if (!confirm("¿Eliminar a " + name + " de la lista de empleados?")) return;
+  if (editingEmpIdx === i) editingEmpIdx = -1;
+  employees.splice(i, 1); persistEmployees(); fillEmployees();
 }
 function addEmployee(){
   var inp = document.getElementById("newEmp"), v = inp.value.trim();
