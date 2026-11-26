@@ -271,11 +271,11 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
 
 <script>
 var RADIUS = 50, MAX_ACC = 50;
-var DAY_SLOTS = [ // pasos de la jornada (v1.11)
+var DAY_SLOTS = [ // pasos de la jornada (v1.11.1: horas en 24 h)
   {label: "Entrada", sub: "mañana"},
-  {label: "Salida comida", sub: "2:00 PM"},
-  {label: "Entrada", sub: "3:00 PM"},
-  {label: "Salida final", sub: "6:00 PM"}
+  {label: "Salida comida", sub: "14:00"},
+  {label: "Entrada", sub: "15:00"},
+  {label: "Salida final", sub: "18:00"}
 ];
 var ADMINS = ["keiji andres henao bayon","norma mariscal","mara henao"];
 var rhList = null; // lista RH central (de la hoja); null = usar ADMINS
@@ -863,7 +863,7 @@ function tickClock(){
   document.getElementById("clock").textContent = d.toLocaleTimeString("es-MX",{hour12:false});
   document.getElementById("dateLine").textContent = d.toLocaleDateString("es-MX",{weekday:"long", day:"numeric", month:"long", year:"numeric"});
   renderProverb();
-  if (d.getSeconds() === 0) updateStatus(); // el horario desbloquea solo al llegar la hora (2, 3 o 6 PM)
+  if (d.getSeconds() === 0) updateStatus(); // el horario desbloquea solo al llegar la hora (14:00, 15:00 o 18:00)
 }
 setInterval(tickClock, 1000); tickClock();
 
@@ -885,13 +885,20 @@ function setGpsCard(title, cls, msg, showSteps){
   var steps = document.getElementById("gpsSteps");
   if (steps) steps.classList.toggle("hidden", !showSteps);
 }
-/* ---------- Registros de hoy + horario del día (v1.11) ---------- */
-/* La jornada tiene 4 pasos: Entrada en la mañana, Salida de comida a las
-   2:00 PM, Entrada a las 3:00 PM y Salida final a las 6:00 PM. La tarjeta
-   "Mis registros de hoy" solo muestra los registros de HOY del empleado
-   de este celular (por fecha local); nada de días anteriores se acumula,
-   cada día empieza de cero. El horario se aplica con los registros
-   LOCALES del celular, sin llamadas al servidor. */
+/* ---------- Registros de hoy + horario del día (v1.11.1) ---------- */
+/* La jornada tiene 4 pasos: Entrada en la mañana, Salida de comida entre
+   las 14:00 y las 15:00, Entrada a las 15:00 y Salida final a las 18:00.
+   La tarjeta "Mis registros de hoy" solo muestra los registros de HOY del
+   empleado de este celular (por fecha local); nada de días anteriores se
+   acumula, cada día empieza de cero. Cada fila se llena por TIPO + HORA
+   (no por orden): así los registros de prueba y los duplicados no llenan
+   la fila equivocada. La fase del día se saca de las filas llenas, no del
+   conteo de registros: un conteo alto por pruebas ya no bloquea la salida
+   de comida. Si ningún paso válido está lleno pero sí hay registros de hoy
+   (pruebas, primera entrada tardía), la fase se decide por el último
+   registro: nunca se deja a nadie atrapado sin poder registrar. El
+   horario se aplica con los registros LOCALES del celular, sin llamadas
+   al servidor. Todas las horas se muestran en 24 h (14:00, nunca en 12 h). */
 function todayRecords(){
   var me = currentEmployee();
   var now = new Date();
@@ -903,41 +910,96 @@ function todayRecords(){
   }).sort(function(a, b){ return a.when - b.when; });
 }
 function fmtTime(d){ return d.toLocaleTimeString("es-MX", {hour: "2-digit", minute: "2-digit", hour12: false}); }
+/* Cada paso de la jornada se llena por tipo + hora (v1.11.1): */
+function daySlots(){
+  var recs = todayRecords();
+  function earliest(type, minH, maxH, after){
+    var best = null;
+    for (var i = 0; i < recs.length; i++){
+      var r = recs[i];
+      if (!r || r.type !== type) continue;
+      var h = r.when.getHours() + r.when.getMinutes() / 60;
+      if (h < minH) continue;
+      if (maxH != null && h >= maxH) continue;
+      if (after && !(r.when > after)) continue;
+      if (!best || r.when < best.when) best = r;
+    }
+    return best;
+  }
+  var row1 = earliest("Entrada", 0, 15, null); // mañana: Entrada antes de las 15:00
+  var row2 = earliest("Salida", 14, null, row1 ? row1.when : null); // comida: Salida desde las 14:00
+  var row3 = earliest("Entrada", 15, null, row2 ? row2.when : null); // regreso: Entrada desde las 15:00
+  var row4 = earliest("Salida", 18, null, row3 ? row3.when : null); // final: Salida desde las 18:00
+  return {row1: row1, row2: row2, row3: row3, row4: row4, recs: recs};
+}
 function scheduleGate(now){
   now = now || new Date();
-  var n = todayRecords().length;
-  // Umbrales por paso: tras el registro n, el siguiente solo desde esta hora.
-  var nextHour = [null, 14, 15, 18]; // n=1 → 2 PM, n=2 → 3 PM, n=3 → 6 PM
-  var nextLabel = [null, "salida de comida a las 2:00 PM", "entrada a las 3:00 PM", "salida final a las 6:00 PM"];
-  if (n === 0) return {allowedIn: true, allowedOut: false, done: false, blockMsg: ""};
-  if (n >= 4) return {allowedIn: false, allowedOut: false, done: true, blockMsg: "Jornada completa: ya registraste tus 4 registros de hoy."};
-  var nextType = (n % 2 === 0) ? "Entrada" : "Salida"; // n=1 → Salida, n=2 → Entrada, n=3 → Salida
-  var open = now.getHours() >= nextHour[n];
-  return {
-    allowedIn: open && nextType === "Entrada",
-    allowedOut: open && nextType === "Salida",
-    done: false,
-    blockMsg: open ? "" : ("Próximo registro: " + nextLabel[n] + ".")
-  };
+  var slots = daySlots();
+  // Fase por filas llenas (pasos válidos), no por conteo de registros.
+  if (slots.row4){
+    return {allowedIn: false, allowedOut: false, done: true, blockMsg: "Jornada completa: ya registraste tu salida final de hoy."};
+  }
+  if (slots.row3){ // ya entró de regreso: solo falta la salida final desde las 18:00
+    var openFinal = now.getHours() >= 18;
+    return {allowedIn: false, allowedOut: openFinal, done: false,
+      blockMsg: openFinal ? "" : "Próximo registro: salida final a las 18:00."};
+  }
+  if (slots.row2){ // ya salió a comer: la entrada de regreso desde las 15:00
+    var openReturn = now.getHours() >= 15;
+    return {allowedIn: openReturn, allowedOut: false, done: false,
+      blockMsg: openReturn ? "" : "Próximo registro: entrada a las 15:00."};
+  }
+  if (slots.row1){ // ya entró en la mañana: salida de comida entre las 14:00 y las 15:00;
+    // si pasan las 15:00 y aún no la marcó, sigue permitida (comida tarde)
+    var openLunch = now.getHours() >= 14;
+    return {allowedIn: false, allowedOut: openLunch, done: false,
+      blockMsg: openLunch ? "" : "Próximo registro: salida de comida entre las 14:00 y las 15:00."};
+  }
+  // Ningún paso válido lleno: hay registros de hoy que no encajan en ningún
+  // paso (pruebas, primera entrada tardía). No atrapar a nadie: se decide
+  // por el último registro (tipo + hora), igual que la fase de arriba.
+  var recs = slots.recs;
+  if (!recs.length) return {allowedIn: true, allowedOut: false, done: false, blockMsg: ""};
+  var last = recs[recs.length - 1];
+  var lh = last.when.getHours() + last.when.getMinutes() / 60;
+  if (last.type === "Entrada" && lh < 15){
+    var o1 = now.getHours() >= 14;
+    return {allowedIn: false, allowedOut: o1, done: false,
+      blockMsg: o1 ? "" : "Próximo registro: salida de comida entre las 14:00 y las 15:00."};
+  }
+  if (last.type === "Entrada"){ // Entrada a las 15:00 o después: regreso
+    var o2 = now.getHours() >= 18;
+    return {allowedIn: false, allowedOut: o2, done: false,
+      blockMsg: o2 ? "" : "Próximo registro: salida final a las 18:00."};
+  }
+  if (last.type === "Salida" && lh < 18){ // salida de comida: regreso desde las 15:00
+    var o3 = now.getHours() >= 15;
+    return {allowedIn: o3, allowedOut: false, done: false,
+      blockMsg: o3 ? "" : "Próximo registro: entrada a las 15:00."};
+  }
+  return {allowedIn: false, allowedOut: false, done: true, blockMsg: "Jornada completa: ya registraste tu salida final de hoy."};
 }
 function renderTodayCard(){
   var rowsEl = document.getElementById("todayRows");
   if (!rowsEl) return;
-  var recs = todayRecords();
+  var slots = daySlots();
+  var rows = [slots.row1, slots.row2, slots.row3, slots.row4];
   var html = "";
   for (var i = 0; i < DAY_SLOTS.length; i++){
     var slot = DAY_SLOTS[i];
-    var r = recs[i];
+    var r = rows[i];
     if (r){
       html += '<div class="today-row"><span><b>' + esc(slot.label) + '</b> <span class="muted">· ' + esc(slot.sub) + '</span></span><span class="done">' + esc(fmtTime(r.when)) + ' · ' + (r.inside ? "En oficina" : "Fuera") + '</span></div>';
     } else {
       html += '<div class="today-row"><span><b>' + esc(slot.label) + '</b> <span class="muted">· ' + esc(slot.sub) + '</span></span><span class="pend">Pendiente</span></div>';
     }
   }
-  for (var j = DAY_SLOTS.length; j < recs.length; j++){
-    var x = recs[j];
+  // Registros de hoy que no llenan ningún paso (pruebas, duplicados): se
+  // muestran como filas extra, sin romper la tarjeta ni el horario.
+  slots.recs.forEach(function(x){
+    if (rows.indexOf(x) >= 0) return;
     html += '<div class="today-row"><span><b>' + esc(x.type) + '</b></span><span class="done">' + esc(fmtTime(x.when)) + ' · ' + (x.inside ? "En oficina" : "Fuera") + '</span></div>';
-  }
+  });
   rowsEl.innerHTML = html;
   var line = document.getElementById("scheduleLine");
   if (line){
@@ -984,7 +1046,7 @@ function updateStatus(){
     document.getElementById("btnOut").textContent = "Registrar salida";
     document.getElementById("btnConfirmPhoto").classList.toggle("hidden", !(needPhoto && photoDataUrl));
   }
-  // Horario del día (v1.11): los botones solo permiten el paso que toca
+  // Horario del día (v1.11.1): los botones solo permiten el paso que toca
   // según los registros de hoy y la hora local. Nunca habilita un botón
   // que la ubicación/foto ya tenía bloqueado, solo puede bloquear más.
   var gate = scheduleGate();
