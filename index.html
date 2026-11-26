@@ -90,6 +90,12 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
       <h2>Este celular no está registrado</h2>
       <p class="muted" style="margin:0 0 10px">Pide tu enlace personal de alta a Recursos Humanos. Ábrelo una sola vez en este celular, con el mismo navegador que abre los códigos QR (Safari en iPhone, Chrome en Android). Cada celular queda registrado a nombre de una sola persona y después ya no se puede cambiar.</p>
       <p class="small" id="enrollStatus" style="min-height:1.2em;margin:0 0 10px"></p>
+      <div id="enrollNameBox" class="hidden">
+        <label class="flabel" for="enrollName">¿Cómo te llamas?</label>
+        <input id="enrollName" type="text" placeholder="Nombre y apellido" autocomplete="name" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text)">
+        <div style="margin-top:10px"><button class="btn-primary" onclick="submitEnrollName()">Registrar este celular</button></div>
+        <p class="small muted" style="margin:8px 0 0">Con tu nombre este celular queda registrado solo para ti: después ya no se podrá checar por otra persona desde aquí.</p>
+      </div>
       <label class="flabel" for="rhNameSel">¿Eres de RH?</label>
       <div class="row">
         <select id="rhNameSel" style="flex:2"></select>
@@ -195,7 +201,12 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
       </div>
       <div class="card">
         <h2>Enlaces personales de alta</h2>
-        <p class="small muted" style="margin:0 0 8px">Cada empleado abre su enlace una sola vez en su celular y queda registrado a su nombre. El enlace solo sirve una vez: si se abre en otro celular, ya no funciona. Compártelo por WhatsApp a cada persona.</p>
+        <p class="small muted" style="margin:0 0 8px">Genera un enlace y mándalo por WhatsApp a la persona que se va a registrar. Al abrirlo escribe su nombre y ese celular queda registrado solo para ella. El enlace solo sirve una vez: si se abre en otro celular, ya no funciona.</p>
+        <div class="row" style="margin-top:10px"><button class="btn-primary" style="flex:1" onclick="genGenericLink()">Generar enlace de alta</button></div>
+        <div id="newLinkBox" class="hidden" style="margin-top:10px">
+          <label class="flabel">Enlace nuevo — cópialo y mándalo por WhatsApp</label>
+          <div class="row"><input id="newLinkUrl" readonly value="" style="flex:2;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text)" onclick="this.select()"><button class="btn-out" style="flex:1" onclick="copyNewLink()">Copiar</button></div>
+        </div>
         <div id="linkList"><p class="small muted">Toca «Actualizar estado» para ver los enlaces.</p></div>
         <div class="row" style="margin-top:10px"><button class="btn-out" style="flex:1" onclick="refreshLinks()">Actualizar estado</button></div>
         <div class="toast" id="linkToast"></div>
@@ -256,9 +267,10 @@ var centralRows = null; // filas centrales de Sheets (null = aún no cargadas)
 var centralFailed = false; // true si el último intento de lectura falló
 
 /* ---------- Alta personal: un celular = una persona ---------- */
-/* Modelo de la app original: RH genera un enlace personal por empleado;
-   el empleado lo abre una sola vez y ese celular queda amarrado a su
-   nombre. El enlace solo sirve una vez (lo valida la hoja "Enlaces"). */
+/* Modelo de la app original: RH genera un enlace genérico de alta; la
+   persona lo abre una sola vez, escribe su nombre y ese celular queda
+   amarrado a su nombre. El enlace solo sirve una vez (lo valida la
+   hoja "Enlaces"). */
 var LS_DEVICE = "checador.device.v1";
 var LS_ENROLL = "checador.enroll.v1";
 var APP_URL = "https://andreshenao-maker.github.io/Checador-Equimar/";
@@ -415,20 +427,40 @@ function setEnrollStatus(msg, ok){
   var el = document.getElementById("enrollStatus");
   if (el){ el.textContent = msg; el.style.color = ok === true ? "var(--green)" : (ok === false ? "var(--red)" : ""); }
 }
+var pendingAltaToken = null; // token del enlace ?alta=… esperando el nombre
 function processAlta(){
   var params = new URLSearchParams(window.location.search);
   var token = params.get("alta");
   if (!token) return;
-  if (enrollment && enrollment.token === token){
+  if (enrollment){
+    // Este celular ya está registrado: no se toca el alta ni se llama al backend.
     history.replaceState(null, "", location.pathname);
-    applyEnrollmentUI();
+    showToast("Este celular ya está registrado a nombre de " + enrollment.empleado + ".", true);
     return;
   }
+  // Sin alta: pedir el nombre primero; usar-enlace se llama solo al registrar.
+  pendingAltaToken = token;
+  var box = document.getElementById("enrollNameBox");
+  if (box) box.classList.remove("hidden");
+  setEnrollStatus("Escribe tu nombre para registrar este celular.", null);
+  var inp = document.getElementById("enrollName");
+  if (inp) inp.focus();
+}
+function submitEnrollName(){
+  if (!pendingAltaToken) return;
+  var inp = document.getElementById("enrollName");
+  var name = inp ? inp.value.trim().replace(/\s+/g, " ") : "";
+  if (name.length < 3 || !/^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'.\- ]+$/.test(name)){
+    setEnrollStatus("Escribe tu nombre completo (mínimo 3 letras).", false);
+    return;
+  }
+  var token = pendingAltaToken;
   setEnrollStatus("Registrando este celular…", null);
-  sheetsPost({key: SHEETS_KEY, action: "usar-enlace", token: token, deviceId: deviceId}).then(function(res){ return res.json(); }).then(function(data){
+  sheetsPost({key: SHEETS_KEY, action: "usar-enlace", token: token, deviceId: deviceId, empleado: name}).then(function(res){ return res.json(); }).then(function(data){
     if (data && data.ok && data.empleado){
       enrollment = {empleado: data.empleado, token: token, deviceId: deviceId};
       persistEnrollment();
+      pendingAltaToken = null;
       history.replaceState(null, "", location.pathname);
       applyEnrollmentUI();
       fillEmployees();
@@ -452,33 +484,27 @@ function openRhGate(){
 
 /* ---------- Enlaces personales (Ajustes, solo RH) ---------- */
 var linkRows = null; // filas de la hoja "Enlaces" (null = aún no cargadas)
-function linkForEmployee(e){
-  if (!linkRows) return null;
-  for (var i = linkRows.length - 1; i >= 0; i--){ if (norm(linkRows[i].empleado) === norm(e)) return linkRows[i]; }
-  return null;
-}
+var lastGenLink = ""; // último enlace generado en esta sesión
 function linkIsUsed(row){ return row && (row.usado === true || row.usado === "TRUE" || row.usado === "true"); }
 function renderLinks(){
   var el = document.getElementById("linkList"); if(!el) return;
   if (!linkRows){ el.innerHTML = '<p class="small muted">Toca «Actualizar estado» para ver los enlaces.</p>'; return; }
-  el.innerHTML = employees.map(function(e, idx){
-    var row = linkForEmployee(e);
-    var status, linkHtml = "";
-    if (!row){ status = "Sin enlace"; }
-    else if (linkIsUsed(row)){ status = "Usado" + (row.fechaUso ? " · " + new Date(row.fechaUso).toLocaleDateString("es-MX") : ""); }
-    else {
-      status = "Pendiente";
+  if (!linkRows.length){ el.innerHTML = '<p class="small muted">Todavía no hay enlaces generados.</p>'; return; }
+  el.innerHTML = linkRows.slice().reverse().map(function(row){
+    var used = linkIsUsed(row);
+    var status = used
+      ? ("Usado" + (row.empleado ? " · " + esc(row.empleado) : "") + (row.fechaUso ? " · " + new Date(row.fechaUso).toLocaleDateString("es-MX") : ""))
+      : "Pendiente";
+    var linkHtml = "";
+    if (!used){
       var url = APP_URL + "?alta=" + encodeURIComponent(row.token);
-      linkHtml = '<div class="row" style="margin-top:8px"><input readonly value="' + esc(url) + '" style="flex:2;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text)" onclick="this.select()"><button class="btn-out" style="flex:1" onclick="copyLink(' + idx + ')">Copiar</button></div>';
+      linkHtml = '<div class="row" style="margin-top:8px"><input readonly value="' + esc(url) + '" style="flex:2;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text)" onclick="this.select()"><button class="btn-out" style="flex:1" onclick="copyLinkByToken(\'' + esc(row.token) + '\')">Copiar</button></div>';
     }
-    return '<div style="border-bottom:1px solid var(--line);padding:10px 0"><div class="kv" style="border-bottom:none;padding:0"><span>' + esc(e) + '</span><b>' + status + '</b></div>' + linkHtml + '<div style="margin-top:8px"><button class="btn-primary" style="width:auto;padding:8px 16px" onclick="genLink(' + idx + ')">Generar enlace</button></div></div>';
+    return '<div style="border-bottom:1px solid var(--line);padding:10px 0"><div class="kv" style="border-bottom:none;padding:0"><span>Enlace de alta</span><b>' + status + '</b></div>' + linkHtml + '</div>';
   }).join("");
 }
-function copyLink(idx){
-  var e = employees[idx]; if (!e) return;
-  var row = linkForEmployee(e); if (!row) return;
-  copyText(APP_URL + "?alta=" + row.token);
-}
+function copyLinkByToken(token){ copyText(APP_URL + "?alta=" + token); }
+function copyNewLink(){ if (lastGenLink) copyText(lastGenLink); }
 function copyText(t){
   function done(ok){
     var el = document.getElementById("linkToast");
@@ -489,16 +515,18 @@ function copyText(t){
   var ok = false; try { ok = document.execCommand("copy"); } catch(e){}
   document.body.removeChild(ta); done(ok);
 }
-function genLink(idx){
-  var e = employees[idx]; if (!e) return;
-  var row = linkForEmployee(e);
-  if (row && !linkIsUsed(row)){
-    if (!confirm("Ya tiene un enlace pendiente. ¿Crear otro? El anterior seguirá sirviendo hasta que se use.")) return;
-  }
+function genGenericLink(){
   var token = "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
-  sheetsPost({key: SHEETS_KEY, action: "crear-enlace", empleado: e, token: token}).then(function(res){ return res.json(); }).then(function(data){
+  sheetsPost({key: SHEETS_KEY, action: "crear-enlace", token: token}).then(function(res){ return res.json(); }).then(function(data){
     var el = document.getElementById("linkToast");
-    if (data && data.ok){ if (el){ el.textContent = "✅ Enlace creado para " + e + ". Cópialo y mándalo por WhatsApp."; el.className = "toast show ok"; } refreshLinks(); }
+    if (data && data.ok){
+      lastGenLink = APP_URL + "?alta=" + token;
+      var box = document.getElementById("newLinkBox"), inp = document.getElementById("newLinkUrl");
+      if (box) box.classList.remove("hidden");
+      if (inp) inp.value = lastGenLink;
+      if (el){ el.textContent = "✅ Enlace creado. Cópialo y mándalo por WhatsApp a la persona que se va a registrar."; el.className = "toast show ok"; }
+      refreshLinks();
+    }
     else if (el){ el.textContent = "No se pudo crear el enlace. Revisa tu conexión e inténtalo de nuevo."; el.className = "toast show err"; }
   }).catch(function(){ var el = document.getElementById("linkToast"); if (el){ el.textContent = "Sin conexión: no se pudo crear el enlace."; el.className = "toast show err"; } });
 }
