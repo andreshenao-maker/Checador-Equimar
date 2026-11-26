@@ -161,7 +161,7 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
       <p class="small muted" style="margin:0 0 10px">Los registros de todos los empleados se guardan en la hoja central de RH. Las fotos quedan solo en el celular que registró, no se suben a la hoja.</p>
       <p class="small" id="histCentralNote" style="margin:0 0 10px"></p>
       <div id="histEmpty" class="muted">Todavía no hay registros en este dispositivo.</div>
-      <div style="overflow-x:auto"><table id="histTable" class="hidden"><thead><tr><th>Empleado</th><th>Tipo</th><th>Fecha y hora</th><th>Ubicación</th><th>Origen</th><th>Foto</th></tr></thead><tbody id="histBody"></tbody></table></div>
+      <div style="overflow-x:auto"><table id="histTable" class="hidden"><thead><tr><th>Empleado</th><th>Tipo</th><th>Fecha y hora</th><th>Validación</th><th>Ubicación</th><th>Folio</th><th>IP</th><th>Mapa</th><th>Foto</th></tr></thead><tbody id="histBody"></tbody></table></div>
       <div class="row" style="margin-top:14px">
         <button class="btn-out" style="flex:1" onclick="fetchCentralHistory()">Actualizar</button>
         <button class="btn-out" style="flex:1" onclick="downloadCSV()">Descargar respaldo (CSV)</button>
@@ -230,12 +230,6 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
         <p class="small muted" style="margin:0 0 8px">Quién puede ver Historial y Ajustes con su PIN. Los cambios se guardan en la hoja y aplican en todos los celulares.</p>
         <div id="rhList"></div>
         <p class="small" id="rhErr" style="color:var(--red);min-height:1.2em;margin:4px 0"></p>
-      </div>
-      <div class="card">
-        <h2>Correos para avisos</h2>
-        <p class="small muted" style="margin:0 0 8px">Los avisos salen a las 14:00 y a las 15:00, de lunes a viernes, solo a quienes les falte ese registro.</p>
-        <div id="correoList"><p class="small muted">Cargando correos…</p></div>
-        <div class="toast" id="correoToast"></div>
       </div>
       <div class="card">
         <h2>Enlaces personales de alta</h2>
@@ -784,138 +778,7 @@ function refreshLinks(){
     if (data && data.ok && data.rows instanceof Array){ linkRows = data.rows; }
     else { linkRows = null; }
     renderLinks();
-    if (document.getElementById("correoList")) renderCorreos();
-  }).catch(function(){ linkRows = null; renderLinks(); if (document.getElementById("correoList")) renderCorreos(); });
-}
-
-/* ---------- Correos para avisos (Ajustes, solo RH) ---------- */
-/* Cada persona tiene un correo guardado en la pestaña "Correos" de la
-   hoja; los avisos de las 14:00 y las 15:00 salen por correo a quienes
-   les falte ese registro. El correo se vincula por nombre aunque la
-   persona se haya registrado con el nombre incompleto (prefijo
-   bidireccional, como adminMatch). */
-var correoRows = null; // [{nombre, correo}] central (null = aún no cargados)
-var correoList = [];   // filas calculadas para mostrar: [{display, correo, enrolled}]
-function normKey(s){ return norm(s).replace(/\s+/g, " "); }
-function namesLink(a, b){ // un nombre es prefijo del otro (o igual)
-  var x = normKey(a), y = normKey(b);
-  if (!x || !y) return false;
-  return x === y || x.indexOf(y) === 0 || y.indexOf(x) === 0;
-}
-function enrolledNames(){
-  var names = [];
-  if (linkRows) linkRows.forEach(function(r){ if (r && r.empleado) names.push(r.empleado); });
-  return names;
-}
-function buildCorreoList(){
-  // Unión: empleados locales + inscritos (enlaces) + nombres con correo central.
-  var map = {}; // key normalizada -> {display, correo, enrolled}
-  function add(name, correo){
-    if (!name) return;
-    var key = normKey(name);
-    if (!key) return;
-    var disp = String(name).trim().replace(/\s+/g, " ");
-    // Misma persona con otro spelling (p. ej. inscrito como "Gabriel
-    // Alejandro" y correo guardado como "Gabriel Alejandro Flores
-    // Arellano"): una sola fila, con el nombre más largo.
-    var foundKey = null;
-    Object.keys(map).forEach(function(k){ if (!foundKey && namesLink(k, key)) foundKey = k; });
-    if (!foundKey){ map[key] = {display: disp, correo: "", enrolled: null}; foundKey = key; }
-    var cur = map[foundKey];
-    if (disp.length > cur.display.length) cur.display = disp; // quedarse con el nombre más largo
-    if (correo && !cur.correo) cur.correo = correo;
-  }
-  employees.forEach(function(e){ add(e); });
-  enrolledNames().forEach(function(n){ add(n); });
-  if (correoRows) correoRows.forEach(function(c){ if (c) add(c.nombre, c.correo); });
-  var list = Object.keys(map).map(function(k){ return map[k]; });
-  var enrolled = enrolledNames();
-  list.forEach(function(row){
-    var match = null;
-    enrolled.forEach(function(n){ if (!match && namesLink(row.display, n)) match = n; });
-    row.enrolled = match;
-  });
-  list.sort(function(a, b){ return a.display.localeCompare(b.display, "es"); });
-  return list;
-}
-function renderCorreos(){
-  var el = document.getElementById("correoList"); if (!el) return;
-  correoList = buildCorreoList();
-  if (!correoList.length){ el.innerHTML = '<p class="small muted">Todavía no hay empleados.</p>'; return; }
-  el.innerHTML = correoList.map(function(row, i){
-    var link = row.enrolled
-      ? ("Vinculado a: " + esc(row.enrolled))
-      : "Aún sin registro con ese nombre — se vinculará cuando se registre";
-    return '<div style="border-bottom:1px solid var(--line);padding:10px 0">'
-      + '<div style="font-weight:700">' + esc(row.display) + '</div>'
-      + '<div class="row" style="margin-top:8px"><input id="correoIn' + i + '" type="email" inputmode="email" placeholder="correo@ejemplo.com" value="' + esc(row.correo || "") + '" style="flex:2;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text)"><button class="btn-primary" style="flex:1;width:auto" onclick="saveCorreoIdx(' + i + ')">Guardar</button><button class="btn-out" style="flex:1;width:auto' + (row.correo ? '' : ';display:none') + '" onclick="delCorreoIdx(' + i + ')" id="correoDel' + i + '">Quitar</button></div>'
-      + '<p class="small muted" style="margin:6px 0 0">' + link + '</p>'
-      + '<p class="small" id="correoErr' + i + '" style="color:var(--red);min-height:1.2em;margin:4px 0"></p>'
-      + '</div>';
-  }).join("");
-}
-function correoToast(msg, ok){
-  var el = document.getElementById("correoToast");
-  if (el){ el.textContent = msg; el.className = "toast show " + (ok ? "ok" : "err"); }
-}
-function setLocalCorreo(nombre, correo){
-  // Reflejar el cambio en la copia local de Correos para que el
-  // re-render no vuelva a mostrar el valor viejo hasta el próximo refresh.
-  if (!(correoRows instanceof Array)) correoRows = [];
-  var found = null;
-  correoRows.forEach(function(c){ if (!found && c && namesLink(c.nombre, nombre)) found = c; });
-  if (correo){
-    if (found) found.correo = correo;
-    else correoRows.push({nombre: nombre, correo: correo});
-  } else if (found){
-    correoRows.splice(correoRows.indexOf(found), 1);
-  }
-}
-function validEmail(c){
-  var at = c.indexOf("@");
-  return at > 0 && c.indexOf(".", at) > at + 1 && c.indexOf(" ") < 0;
-}
-function saveCorreoIdx(i){
-  var row = correoList[i]; if (!row) return;
-  var inp = document.getElementById("correoIn" + i);
-  var correo = inp ? inp.value.trim() : "";
-  var err = document.getElementById("correoErr" + i);
-  if (!validEmail(correo)){ if (err) err.textContent = "Escribe un correo válido (ejemplo: nombre@correo.com)."; return; }
-  if (err) err.textContent = "";
-  sheetsPost({key: SHEETS_KEY, action: "guardar-correo", nombre: row.display, correo: correo}).then(function(res){ return res.json(); }).then(function(data){
-    if (data && data.ok){
-      row.correo = correo;
-      setLocalCorreo(row.display, correo);
-      correoToast("Correo guardado.", true);
-      renderCorreos();
-    } else {
-      correoToast("No se pudo guardar el correo, inténtalo de nuevo.", false);
-    }
-  }).catch(function(){ correoToast("No se pudo guardar el correo, inténtalo de nuevo.", false); });
-}
-function delCorreoIdx(i){
-  var row = correoList[i]; if (!row) return;
-  sheetsPost({key: SHEETS_KEY, action: "borrar-correo", nombre: row.display}).then(function(res){ return res.json(); }).then(function(data){
-    if (data && data.ok){
-      row.correo = "";
-      setLocalCorreo(row.display, "");
-      correoToast("Correo eliminado.", true);
-      renderCorreos();
-    } else {
-      correoToast("No se pudo eliminar el correo, inténtalo de nuevo.", false);
-    }
-  }).catch(function(){ correoToast("No se pudo eliminar el correo, inténtalo de nuevo.", false); });
-}
-function refreshCorreos(){
-  // Si el backend aún no tiene la acción correos (o no hay red), se
-  // muestra la lista con los correos vacíos y Ajustes no se rompe.
-  fetch(SHEETS_URL + "?key=" + encodeURIComponent(SHEETS_KEY) + "&action=correos").then(function(res){ return res.json(); }).then(function(data){
-    if (data && data.ok && data.correos instanceof Array){ correoRows = data.correos; }
-    else { correoRows = []; }
-    renderCorreos();
-  }).catch(function(){ correoRows = []; renderCorreos(); });
-  // Los enlaces dan los nombres inscritos: refrescarlos también alimenta la lista.
-  if (!linkRows) refreshLinks();
+  }).catch(function(){ linkRows = null; renderLinks(); });
 }
 
 /* ---------- Proverbio del día ---------- */
@@ -1367,6 +1230,7 @@ function saveRecord(type, st){
     id: "r" + now.getTime().toString(36) + Math.random().toString(36).slice(2, 8),
     name: currentEmployee(), type: type, when: now,
     inside: !!st.inside, dist: st.dist, acc: pos ? pos.acc : null,
+    lat: pos ? pos.lat : null, lon: pos ? pos.lon : null,
     gps: gpsState, source: locSource(), ip: currentIP, photo: photoDataUrl || null,
     synced: false
   };
@@ -1379,7 +1243,7 @@ function saveRecord(type, st){
 /* ---------- Envío a la hoja central (Google Sheets) ---------- */
 function sendToSheets(rec){
   if (!rec.id) rec.id = "r" + (rec.when ? rec.when.getTime().toString(36) : Date.now().toString(36)) + Math.random().toString(36).slice(2, 8);
-  var payload = {key: SHEETS_KEY, fecha: (rec.when instanceof Date ? rec.when : new Date(rec.when)).toISOString(), empleado: rec.name, tipo: rec.type, enOficina: !!rec.inside, distancia: (rec.dist == null ? null : Math.round(rec.dist)), origen: rec.source || "sin señal", conFoto: !!rec.photo, id: rec.id, dispositivo: deviceId};
+  var payload = {key: SHEETS_KEY, fecha: (rec.when instanceof Date ? rec.when : new Date(rec.when)).toISOString(), empleado: rec.name, tipo: rec.type, enOficina: !!rec.inside, distancia: (rec.dist == null ? null : Math.round(rec.dist)), origen: rec.source || "sin señal", conFoto: !!rec.photo, id: rec.id, dispositivo: (typeof navigator !== "undefined" && navigator.userAgent) ? navigator.userAgent : "", deviceId: deviceId, ip: rec.ip || "", latitud: (rec.lat == null ? "" : rec.lat), longitud: (rec.lon == null ? "" : rec.lon), precision: (rec.acc == null ? "" : Math.round(rec.acc))};
   try {
     fetch(SHEETS_URL, {method: "POST", headers: {"Content-Type": "text/plain"}, body: JSON.stringify(payload)}).then(function(){ rec.synced = true; persistRecordsSafe(); }).catch(function(){ /* sin red: queda pendiente, se reintenta luego */ });
   } catch(e){ /* sin red: queda pendiente */ }
@@ -1392,12 +1256,20 @@ function retryUnsynced(){
     sendToSheets(r);
   });
 }
+/* Hora de una fila central para ordenar: el formato nuevo trae marcaTiempo
+   ("YYYY-MM-DD HH:MM:SS") o fecha+hora; el viejo trae fecha ISO. */
+function centralRowTime(r){
+  var s = r.marcaTiempo || ((r.fecha && r.hora) ? (r.fecha + " " + r.hora) : r.fecha);
+  if (!s) return 0;
+  var d = new Date(String(s).replace(" ", "T"));
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
 /* Solo se llama desde el Historial desbloqueado de RH. Nunca desde Checar
    ni para empleados normales. */
 function fetchCentralHistory(){
   fetch(SHEETS_URL + "?key=" + encodeURIComponent(SHEETS_KEY)).then(function(res){ return res.json(); }).then(function(data){
     if (data && data.ok && data.rows instanceof Array){
-      centralRows = data.rows.slice().sort(function(a, b){ return new Date(b.fecha) - new Date(a.fecha); }).slice(0, 200);
+      centralRows = data.rows.slice().sort(function(a, b){ return centralRowTime(b) - centralRowTime(a); }).slice(0, 200);
       centralFailed = false;
     } else { centralRows = null; centralFailed = true; }
     renderHistory();
@@ -1487,6 +1359,22 @@ function distVal(v){
   var n = Number(v);
   return isNaN(n) ? null : n;
 }
+function numOrNull(v){
+  if (v === null || v === undefined || v === "") return null;
+  var n = Number(v);
+  return isNaN(n) ? null : n;
+}
+/* v1.14: el formato nuevo de la hoja trae 16 columnas (fecha, hora, id,
+   nombre, tipo, modalidad, validacion, ip, latitud, longitud, precision,
+   mapa, foto, dispositivo, marcaTiempo, folio) más enOficina (booleano).
+   La foto se deduce del campo foto: enlace Drive ("http…"), el texto
+   "Foto en su celular" (foto tomada, aún sin enlace) o "" (sin foto).
+   Las filas viejas (empleado, fecha ISO, distancia, origen, conFoto)
+   se siguen mostrando sin romperse. */
+function safeHttpUrl(v){
+  var s = String(v == null ? "" : v);
+  return (s.indexOf("https://") === 0 || s.indexOf("http://") === 0) ? s : "";
+}
 function renderHistory(){
   var empty = document.getElementById("histEmpty"), table = document.getElementById("histTable"), body = document.getElementById("histBody"), note = document.getElementById("histCentralNote");
   var central = centralRows !== null;
@@ -1504,25 +1392,69 @@ function renderHistory(){
   empty.style.display = "none"; table.classList.remove("hidden");
   body.innerHTML = "";
   rows.forEach(function(r){
-    var name = central ? r.empleado : r.name;
-    var type = central ? r.tipo : r.type;
-    var when = central ? new Date(r.fecha) : r.when;
-    var inside = central ? !!r.enOficina : !!r.inside;
-    var dist = central ? distVal(r.distancia) : r.dist;
-    var acc = central ? null : r.acc;
-    var src = central ? (r.origen || "sin señal") : (r.source || "sin señal");
-    var ubi = inside ? "En oficina" : ("Fuera / no confirmado" + (dist != null ? " · " + fmt(dist) : " · sin GPS") + (acc != null ? " · ±" + Math.round(acc) + " m" : ""));
     var tr = document.createElement("tr");
-    var c1 = document.createElement("td"); var b = document.createElement("b"); b.textContent = name; c1.appendChild(b);
-    var c2 = document.createElement("td"); c2.textContent = type;
-    var c3 = document.createElement("td"); c3.textContent = (when instanceof Date && !isNaN(when.getTime())) ? (when.toLocaleDateString("es-MX") + " " + when.toLocaleTimeString("es-MX",{hour12:false})) : "—";
-    var c4 = document.createElement("td"); c4.textContent = ubi;
-    var c4b = document.createElement("td"); c4b.textContent = locSourceLabel(src);
-    var c5 = document.createElement("td");
-    if (central) c5.textContent = hasPhotoVal(r.conFoto) ? "Foto en su celular" : "Sin foto";
-    else if (r.photo){ var im = document.createElement("img"); im.className = "rec-photo"; im.alt = "Foto de registro"; im.src = r.photo; c5.appendChild(im); }
-    else c5.textContent = "Sin foto";
-    [c1,c2,c3,c4,c4b,c5].forEach(function(c){ tr.appendChild(c); });
+    var c1 = document.createElement("td"); var b = document.createElement("b");
+    var c2 = document.createElement("td"); // Tipo
+    var c3 = document.createElement("td"); // Fecha y hora
+    var c4 = document.createElement("td"); // Validación
+    var c5 = document.createElement("td"); // Ubicación
+    var c6 = document.createElement("td"); // Folio
+    var c7 = document.createElement("td"); // IP
+    var c8 = document.createElement("td"); // Mapa
+    var c9 = document.createElement("td"); // Foto
+    if (central){
+      var isNew = r.nombre != null;
+      b.textContent = isNew ? (r.nombre || "") : (r.empleado || "");
+      c2.textContent = r.tipo || "";
+      if (isNew){
+        if (r.fecha && r.hora) c3.textContent = r.fecha + " " + r.hora;
+        else if (r.marcaTiempo) c3.textContent = String(r.marcaTiempo);
+        else c3.textContent = "—";
+      } else {
+        var w = new Date(r.fecha);
+        c3.textContent = (!isNaN(w.getTime())) ? (w.toLocaleDateString("es-MX") + " " + w.toLocaleTimeString("es-MX",{hour12:false})) : "—";
+      }
+      var inside = !!r.enOficina;
+      c4.textContent = isNew ? (r.validacion || "") : locSourceLabel(r.origen || "sin señal");
+      if (isNew){
+        var prec = numOrNull(r.precision);
+        c5.textContent = inside ? "En oficina" : "Fuera";
+        if (prec != null) c5.textContent += " · ±" + Math.round(prec) + " m";
+        c6.textContent = r.folio || "";
+        c7.textContent = r.ip || "";
+      } else {
+        var dist = distVal(r.distancia);
+        c5.textContent = inside ? "En oficina" : ("Fuera / no confirmado" + (dist != null ? " · " + fmt(dist) : " · sin GPS"));
+        c6.textContent = "";
+        c7.textContent = "";
+      }
+      if (isNew && safeHttpUrl(r.mapa)){
+        var a = document.createElement("a"); a.href = safeHttpUrl(r.mapa); a.target = "_blank"; a.rel = "noopener"; a.textContent = "Ver mapa"; c8.appendChild(a);
+      } else c8.textContent = "—";
+      if (isNew && safeHttpUrl(r.foto)){
+        var a2 = document.createElement("a"); a2.href = safeHttpUrl(r.foto); a2.target = "_blank"; a2.rel = "noopener"; a2.textContent = "Ver foto"; c9.appendChild(a2);
+      } else if (isNew && r.foto === "Foto en su celular"){
+        c9.textContent = "Foto en su celular";
+      } else c9.textContent = hasPhotoVal(r.conFoto) ? "Foto en su celular" : "Sin foto";
+    } else {
+      // Respaldo local: los registros de este celular, con su forma vieja.
+      b.textContent = r.name || "";
+      c2.textContent = r.type || "";
+      c3.textContent = (r.when instanceof Date && !isNaN(r.when.getTime())) ? (r.when.toLocaleDateString("es-MX") + " " + r.when.toLocaleTimeString("es-MX",{hour12:false})) : "—";
+      var src = r.source || "sin señal";
+      c4.textContent = locSourceLabel(src);
+      var insideL = !!r.inside;
+      var distL = r.dist;
+      var accL = r.acc;
+      c5.textContent = insideL ? "En oficina" : ("Fuera / no confirmado" + (distL != null ? " · " + fmt(distL) : " · sin GPS") + (accL != null ? " · ±" + Math.round(accL) + " m" : ""));
+      c6.textContent = "";
+      c7.textContent = r.ip || "";
+      c8.textContent = "—";
+      if (r.photo){ var im = document.createElement("img"); im.className = "rec-photo"; im.alt = "Foto de registro"; im.src = r.photo; c9.appendChild(im); }
+      else c9.textContent = "Sin foto";
+    }
+    c1.appendChild(b);
+    [c1,c2,c3,c4,c5,c6,c7,c8,c9].forEach(function(c){ tr.appendChild(c); });
     body.appendChild(tr);
   });
 }
@@ -1530,16 +1462,28 @@ function downloadCSV(){
   var central = centralRows !== null;
   var rows = central ? centralRows : records;
   if(!rows.length) return;
-  var out = [["Empleado","Tipo","Fecha","Hora","Ubicacion","Origen","Distancia_m","Precision_m","Con_foto"]];
-  rows.forEach(function(r){
-    if (central){
-      var w = new Date(r.fecha);
-      var dv = distVal(r.distancia);
-      out.push([r.empleado, r.tipo, w.toLocaleDateString("es-MX"), w.toLocaleTimeString("es-MX",{hour12:false}), r.enOficina ? "En oficina" : "Fuera", locSourceLabel(r.origen || "sin señal"), dv==null?"":Math.round(dv), "", hasPhotoVal(r.conFoto)?"Si":"No"]);
-    } else {
+  var out;
+  if (central){
+    // Formato nuevo de la hoja: las 16 columnas en el mismo orden.
+    out = [["Fecha","Hora","ID","Nombre","Tipo","Modalidad","Validación","IP","Latitud","Longitud","Precisión GPS (m)","Mapa","Foto","Dispositivo","Marca de tiempo","Folio"]];
+    rows.forEach(function(r){
+      if (r.nombre != null){
+        out.push([r.fecha||"", r.hora||"", r.id||"", r.nombre||"", r.tipo||"", r.modalidad||"", r.validacion||"", r.ip||"", r.latitud==null?"":r.latitud, r.longitud==null?"":r.longitud, r.precision==null?"":r.precision, r.mapa||"", r.foto||"", r.dispositivo||"", r.marcaTiempo||"", r.folio||""]);
+      } else {
+        // Fila vieja: se mapea lo que existe; el resto queda vacío.
+        var w = new Date(r.fecha);
+        var dstr = !isNaN(w.getTime()) ? w.toLocaleDateString("es-MX") : "";
+        var tstr = !isNaN(w.getTime()) ? w.toLocaleTimeString("es-MX",{hour12:false}) : "";
+        out.push([dstr, tstr, "", r.empleado||"", r.tipo||"", "", locSourceLabel(r.origen || "sin señal"), "", "", "", "", "", "", "", "", ""]);
+      }
+    });
+  } else {
+    // Respaldo local: sin cambios, los registros de este celular.
+    out = [["Empleado","Tipo","Fecha","Hora","Ubicacion","Origen","Distancia_m","Precision_m","Con_foto"]];
+    rows.forEach(function(r){
       out.push([r.name, r.type, r.when.toLocaleDateString("es-MX"), r.when.toLocaleTimeString("es-MX",{hour12:false}), r.inside ? "En oficina" : "Fuera", locSourceLabel(r.source || "sin señal"), r.dist==null?"":Math.round(r.dist), r.acc==null?"":Math.round(r.acc), r.photo?"Si":"No"]);
-    }
-  });
+    });
+  }
   var csv = out.map(function(r){ return r.map(function(c){ return '"' + String(c).replace(/"/g,'""') + '"'; }).join(","); }).join("\n");
   var a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob(["\ufeff" + csv], {type:"text/csv"}));
@@ -1576,7 +1520,7 @@ function goTab(tab){
   document.getElementById("adjLocked").classList.toggle("hidden", unlocked);
   document.getElementById("adjContent").classList.toggle("hidden", !unlocked);
   if (tab === "historial" && unlocked) fetchCentralHistory();
-  if (tab === "ajustes" && unlocked){ refreshLinks(); refreshCorreos(); }
+  if (tab === "ajustes" && unlocked){ refreshLinks(); }
   if (isAdm && !unlocked) openPin(name);
 }
 function openPin(name){
