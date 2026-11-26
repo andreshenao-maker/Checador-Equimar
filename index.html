@@ -1006,7 +1006,7 @@ function openPin(name){
   // se haya registrado con el nombre corto ("keiji andres henao"), para
   // no pedir un PIN distinto por cada variante del nombre.
   pinForName = adminMatch(name) || name;
-  var has = !!adminPins[norm(name)];
+  var has = !!adminPins[norm(pinForName)];
   document.getElementById("pinSub").textContent = has ? (name + ", escribe tu PIN de RH.") : (name + ", es tu primera vez en este dispositivo: crea tu PIN personal de RH.");
   document.getElementById("pinCreate").classList.toggle("hidden", has);
   document.getElementById("pinEnter").classList.toggle("hidden", !has);
