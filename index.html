@@ -109,6 +109,7 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
       <div class="date" id="dateLine">—</div>
       <div style="text-align:center;margin-top:12px"><span class="pill mid" id="statusPill">Verificando ubicación…</span></div>
       <p class="small muted" id="gpsLine" style="text-align:center;margin:10px 0 0">Verificando ubicación…</p>
+      <p class="small muted" id="ipLine" style="text-align:center;margin:6px 0 0">Tu IP: detectando…</p>
       <div id="gpsSteps" class="hidden" style="text-align:left">
         <ol class="steps small">
           <li>Enciende la <b>Ubicación</b> del celular y activa la <b>ubicación precisa</b>.</li>
@@ -325,6 +326,25 @@ function fetchCentralConfig(){
     if (data && data.ok && data.config){ centralConfig = data.config; applyCentralConfig(data.config); }
     centralConfigLoaded = true;
   }).catch(function(){ centralConfigLoaded = true; });
+}
+/* Variante que se puede esperar (await) con límite de tiempo: la usa el
+   registro para traer la config más fresca antes de decidir, sin bloquear
+   nunca el registro si no hay red o tarda. */
+function fetchCentralConfigAsync(timeoutMs){
+  timeoutMs = timeoutMs || 2500;
+  return new Promise(function(resolve){
+    var done = false;
+    var to = setTimeout(function(){ if (!done){ done = true; resolve(false); } }, timeoutMs);
+    fetch(SHEETS_URL + "?key=" + encodeURIComponent(SHEETS_KEY) + "&action=config").then(function(res){ return res.json(); }).then(function(data){
+      if (done) return;
+      done = true; clearTimeout(to);
+      if (data && data.ok && data.config){ centralConfig = data.config; applyCentralConfig(data.config); }
+      centralConfigLoaded = true; resolve(true);
+    }).catch(function(){
+      if (done) return;
+      done = true; clearTimeout(to); centralConfigLoaded = true; resolve(false);
+    });
+  });
 }
 function applyCentralConfig(cfg){
   var clat = parseFloat(cfg.officeLat), clon = parseFloat(cfg.officeLon);
@@ -835,7 +855,7 @@ function updateStatus(){
   var inside = false, needPhoto = false;
   var pTitle = document.getElementById("photoTitle"), pReason = document.getElementById("photoReason");
   if (ipInOffice){ inside = true; pill.textContent = "✅ En oficina"; pill.className = "pill in"; setGpsCard("", "", "En oficina por WiFi/IP", false); }
-  else if (pos && office && pos.acc <= MAX_ACC && dist <= RADIUS){ inside = true; pill.textContent = "✅ En oficina"; pill.className = "pill in"; }
+  else if (pos && office && pos.acc <= MAX_ACC && dist <= RADIUS){ inside = true; pill.textContent = "✅ En oficina"; pill.className = "pill in"; learnOfficeIpFromGps(); }
   else if (pos && office && pos.acc > MAX_ACC){ needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill out"; pTitle.textContent = "No se confirmó que estés dentro de la oficina: tu foto hace el registro"; pReason.textContent = "Tu precisión es de ±" + Math.round(pos.acc) + " m y se aceptan ±50 m para registrar sin foto. Con la pura foto queda registrado, sin revisión de RH."; }
   else if (pos && office){ needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill out"; pTitle.textContent = "Estás fuera de la oficina: se necesita tu foto para registrar"; pReason.textContent = "Sin revisión de RH: con la pura foto queda registrado, marcado como fuera, a " + fmt(dist) + " de la oficina, con la hora."; }
   else if (pos && !office){ needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill out"; pTitle.textContent = "Todavía no se puede saber si estás dentro o fuera: se necesita tu foto"; pReason.textContent = "El punto de la oficina aún no está fijado (lo hace RH en Ajustes, parado en la puerta). Mientras tanto, el registro es con foto."; }
@@ -846,6 +866,7 @@ function updateStatus(){
   // Dentro: botones directos. Fuera: primero foto, luego confirmar.
   document.getElementById("btnIn").disabled = !(inside || (needPhoto && !photoDataUrl && (pos || fallbackReady)) || (needPhoto && !!photoDataUrl));
   document.getElementById("btnOut").disabled = document.getElementById("btnIn").disabled;
+  renderIpLine();
   if (needPhoto && !photoDataUrl){
     document.getElementById("btnIn").textContent = "Primero toma tu foto ↑";
     document.getElementById("btnOut").textContent = "Primero toma tu foto ↑";
@@ -858,23 +879,47 @@ function updateStatus(){
   }
   return {inside: inside, needPhoto: needPhoto, dist: dist};
 }
+/* ---------- Línea de IP en Checar + auto-aprendizaje de la IP de oficina ---------- */
+/* La IP pública de la oficina rota (Infinitum/Totalplay). Cuando el GPS
+   confirma que el celular está dentro de la oficina, la IP actual de ese
+   celular ES una IP de oficina: se guarda sola (local + hoja central) para
+   que los demás celulares la hereden sin que RH tenga que hacer nada. */
+function renderIpLine(){
+  var el = document.getElementById("ipLine"); if (!el) return;
+  if (!currentIP){ el.textContent = "Tu IP: detectando…"; return; }
+  el.textContent = "Tu IP: " + currentIP + " · IP de oficina: " + (officeIPs.indexOf(currentIP) >= 0 ? "sí ✅" : "no");
+}
+function learnOfficeIpFromGps(){
+  // Solo se llama desde la rama GPS-dentro de updateStatus(): nunca desde
+  // wifi-red, wifi-ip ni sin señal, y nunca sin GPS ni sin punto.
+  if (!currentIP) return;
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(currentIP)) return;
+  if (officeIPs.indexOf(currentIP) >= 0) return; // ya conocida: no duplicar
+  officeIPs.push(currentIP);
+  persistIPs();
+  pushCentralConfig(); // la IP nueva llega a la hoja para todos los celulares
+  renderIpList();
+  renderIpLine();
+}
 /* ---------- IP pública: respaldo por WiFi, nunca bloquea ---------- */
-async function fetchIP(){
+async function fetchIP(timeoutMs){
+  var ms = timeoutMs || 5000;
   try {
     var ctrl = new AbortController();
-    var to = setTimeout(function(){ ctrl.abort(); }, 5000);
+    var to = setTimeout(function(){ ctrl.abort(); }, ms);
     var r = await fetch("https://api.ipify.org?format=json", {signal: ctrl.signal});
     clearTimeout(to);
-    if (!r.ok) return;
+    if (!r.ok){ renderIpLine(); return; }
     var j = await r.json();
-    if (!j || !j.ip) return;
+    if (!j || !j.ip){ renderIpLine(); return; }
     currentIP = j.ip;
     ipInOffice = officeIPs.indexOf(currentIP) >= 0;
     var el = document.getElementById("ipCurrent");
     if (el) el.textContent = currentIP + (ipInOffice ? " · coincide con la IP de oficina ✅" : "");
     renderIpList();
+    renderIpLine();
     if (ipInOffice) updateStatus();
-  } catch(e){ /* sin internet o ipify no responde: se ignora en silencio, el GPS manda */ }
+  } catch(e){ var ipl = document.getElementById("ipLine"); if (ipl && !currentIP) ipl.textContent = "Tu IP: no se pudo detectar"; /* sin internet o ipify no responde: se ignora en silencio, el GPS manda */ }
 }
 function renderIpList(){
   var el = document.getElementById("ipList"); if(!el) return;
@@ -1053,13 +1098,34 @@ function fetchCentralHistory(){
     renderHistory();
   }).catch(function(){ centralRows = null; centralFailed = true; renderHistory(); });
 }
-function tryRegister(type){
-  var st = updateStatus();
-  if (st.inside){ saveRecord(type, st); resetPhoto(); updateStatus(); showToast("✅ " + type + " registrada en oficina — " + currentEmployee() + ", " + new Date().toLocaleTimeString("es-MX",{hour12:false}) + ". Sin foto, dentro del radio de 50 m.", true); return; }
-  if (!photoDataUrl){ showToast("Estás fuera de la oficina (o sin señal GPS): primero toma tu foto arriba para poder registrar.", false); document.getElementById("photoBox").scrollIntoView({behavior:"smooth"}); return; }
-  pendingType = type; confirmPhotoRegister();
+/* Antes de cada registro: traer la config central más fresca y volver a
+   revisar la IP pública, con límite total de ~2.5 s. Si no hay red o tarda,
+   se sigue con los valores guardados: el registro nunca se bloquea. */
+var registering = false;
+function refreshBeforeRegister(btnId){
+  var btn = btnId ? document.getElementById(btnId) : null;
+  var origText = btn ? btn.textContent : "";
+  if (btn){ btn.textContent = "Actualizando…"; btn.disabled = true; }
+  function restore(){
+    if (btn){ btn.textContent = origText; }
+    updateStatus(); // restaura textos y estados de los botones con valores frescos
+  }
+  var done = Promise.all([fetchCentralConfigAsync(2500), fetchIP(2500)]);
+  var timeout = new Promise(function(res){ setTimeout(function(){ res("timeout"); }, 2500); });
+  return Promise.race([done, timeout]).then(restore, restore);
 }
-function confirmPhotoRegister(){
+async function tryRegister(type){
+  if (registering) return;
+  registering = true;
+  try {
+    await refreshBeforeRegister(type === "Entrada" ? "btnIn" : "btnOut");
+    var st = updateStatus();
+    if (st.inside){ saveRecord(type, st); resetPhoto(); updateStatus(); showToast("✅ " + type + " registrada en oficina — " + currentEmployee() + ", " + new Date().toLocaleTimeString("es-MX",{hour12:false}) + ". Sin foto, dentro del radio de 50 m.", true); return; }
+    if (!photoDataUrl){ showToast("Estás fuera de la oficina (o sin señal GPS): primero toma tu foto arriba para poder registrar.", false); document.getElementById("photoBox").scrollIntoView({behavior:"smooth"}); return; }
+    pendingType = type; doConfirmPhotoRegister();
+  } finally { registering = false; }
+}
+function doConfirmPhotoRegister(){
   var type = pendingType || "Entrada";
   var st = updateStatus();
   if (!photoDataUrl){ showToast("Falta tu foto para registrar fuera de la oficina.", false); return; }
@@ -1067,6 +1133,12 @@ function confirmPhotoRegister(){
   var why = !pos ? "sin señal GPS" : (!office ? "oficina aún no configurada" : (pos.acc > MAX_ACC ? "precisión de ±" + Math.round(pos.acc) + " m" : "a " + fmt(st.dist) + " de la oficina"));
   resetPhoto(); updateStatus();
   showToast("✅ " + type + " registrada con foto — " + currentEmployee() + ", " + new Date().toLocaleTimeString("es-MX",{hour12:false}) + ". Marcada como fuera / no confirmada: " + why + ".", true);
+}
+async function confirmPhotoRegister(){
+  if (registering) return;
+  registering = true;
+  try { await refreshBeforeRegister("btnConfirmPhoto"); doConfirmPhotoRegister(); }
+  finally { registering = false; }
 }
 
 /* ---------- Historial / roles ---------- */
