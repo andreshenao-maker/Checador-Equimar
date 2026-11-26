@@ -86,10 +86,25 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
 
   <!-- CHECAR -->
   <section id="view-checar">
+    <div class="card hidden" id="enrollGate">
+      <h2>Este celular no está registrado</h2>
+      <p class="muted" style="margin:0 0 10px">Pide tu enlace personal de alta a Recursos Humanos. Ábrelo una sola vez en este celular, con el mismo navegador que abre los códigos QR (Safari en iPhone, Chrome en Android). Cada celular queda registrado a nombre de una sola persona y después ya no se puede cambiar.</p>
+      <p class="small" id="enrollStatus" style="min-height:1.2em;margin:0 0 10px"></p>
+      <label class="flabel" for="rhNameSel">¿Eres de RH?</label>
+      <div class="row">
+        <select id="rhNameSel" style="flex:2"></select>
+        <button class="btn-out" style="flex:1" onclick="openRhGate()">Soy RH</button>
+      </div>
+      <p class="small muted">RH puede abrir Ajustes con su PIN para generar los enlaces personales.</p>
+    </div>
+    <div id="checarMain">
     <div class="card">
       <p class="proverb" id="dailyProverb">—</p>
+      <div id="empPicker">
       <label class="flabel" for="selEmployee">¿Quién registra?</label>
       <select id="selEmployee" onchange="onEmployeeChange()"></select>
+      </div>
+      <div id="enrolledAs" class="hidden" style="text-align:center;font-size:1.05rem;margin-bottom:6px">Registrando como: <b id="enrolledName"></b></div>
       <div class="clock" id="clock">--:--:--</div>
       <div class="date" id="dateLine">—</div>
       <div style="text-align:center;margin-top:12px"><span class="pill mid" id="statusPill">Verificando ubicación…</span></div>
@@ -117,6 +132,7 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
       </div>
       <button class="btn-primary hidden" id="btnConfirmPhoto" style="margin-top:12px" onclick="confirmPhotoRegister()">Confirmar registro con foto</button>
       <div class="toast" id="toast"></div>
+    </div>
     </div>
   </section>
 
@@ -177,6 +193,13 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
         </div>
         <p class="small muted">RH (🔒) ve Historial y Ajustes con su PIN. Todos los demás solo se registran.</p>
       </div>
+      <div class="card">
+        <h2>Enlaces personales de alta</h2>
+        <p class="small muted" style="margin:0 0 8px">Cada empleado abre su enlace una sola vez en su celular y queda registrado a su nombre. El enlace solo sirve una vez: si se abre en otro celular, ya no funciona. Compártelo por WhatsApp a cada persona.</p>
+        <div id="linkList"><p class="small muted">Toca «Actualizar estado» para ver los enlaces.</p></div>
+        <div class="row" style="margin-top:10px"><button class="btn-out" style="flex:1" onclick="refreshLinks()">Actualizar estado</button></div>
+        <div class="toast" id="linkToast"></div>
+      </div>
     </div>
   </section>
 </div>
@@ -211,6 +234,7 @@ var office = null; // {lat, lon} — se fija parado en la puerta, desde Ajustes
 var records = [];  // registros de ESTE dispositivo, solo en memoria de la sesión
 var adminPins = {}; // nombre normalizado -> PIN (solo en memoria)
 var unlockedFor = null;
+var pinForName = null;
 var pendingTab = "checar";
 
 var pos = null; // {lat, lon, acc, source: 'gps' | 'wifi-red'}
@@ -230,6 +254,31 @@ var SHEETS_URL = "https://script.google.com/macros/s/AKfycbxoWnLudZJ49aKRg5WxC-s
 var SHEETS_KEY = "checador-RH-2026-x7k9";
 var centralRows = null; // filas centrales de Sheets (null = aún no cargadas)
 var centralFailed = false; // true si el último intento de lectura falló
+
+/* ---------- Alta personal: un celular = una persona ---------- */
+/* Modelo de la app original: RH genera un enlace personal por empleado;
+   el empleado lo abre una sola vez y ese celular queda amarrado a su
+   nombre. El enlace solo sirve una vez (lo valida la hoja "Enlaces"). */
+var LS_DEVICE = "checador.device.v1";
+var LS_ENROLL = "checador.enroll.v1";
+var APP_URL = "https://andreshenao-maker.github.io/Checador-Equimar/";
+function getDeviceId(){
+  var d = lsGet(LS_DEVICE);
+  if (typeof d === "string" && d) return d;
+  d = "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  lsSet(LS_DEVICE, d);
+  return d;
+}
+var deviceId = getDeviceId();
+var enrollment = null;
+(function(){
+  var e = lsGet(LS_ENROLL);
+  if (e && typeof e.empleado === "string" && e.empleado && typeof e.token === "string" && e.token) enrollment = e;
+})();
+function persistEnrollment(){ if (enrollment) lsSet(LS_ENROLL, enrollment); }
+function sheetsPost(payload){
+  return fetch(SHEETS_URL, {method: "POST", headers: {"Content-Type": "text/plain"}, body: JSON.stringify(payload)});
+}
 
 /* ---------- Persistencia: todo queda guardado en este dispositivo ---------- */
 /* localStorage sobrevive a cerrar la app. Si no está disponible (modo privado,
@@ -305,7 +354,7 @@ function locSourceLabel(src){
 function norm(s){ return (s||"").trim().toLowerCase(); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
 function isAdmin(name){ return ADMINS.indexOf(norm(name)) >= 0; }
-function currentEmployee(){ return document.getElementById("selEmployee").value; }
+function currentEmployee(){ if (enrollment) return enrollment.empleado; var s = document.getElementById("selEmployee"); return s ? s.value : ""; }
 function fmt(n){ return n==null ? "—" : Math.round(n) + " m"; }
 
 function fillEmployees(){
@@ -315,14 +364,19 @@ function fillEmployees(){
     var o = document.createElement("option"); o.value = e; o.textContent = e + (isAdmin(e) ? " · RH" : "");
     sel.appendChild(o);
   });
-  if (cur && employees.indexOf(cur) >= 0) sel.value = cur;
+  if (enrollment && employees.indexOf(enrollment.empleado) >= 0) sel.value = enrollment.empleado;
+  else if (cur && employees.indexOf(cur) >= 0) sel.value = cur;
+  var rh = document.getElementById("rhNameSel");
+  if (rh){ rh.innerHTML = ""; employees.filter(function(e){ return isAdmin(e); }).forEach(function(e){ var o = document.createElement("option"); o.value = e; o.textContent = e; rh.appendChild(o); }); }
   onEmployeeChange(true);
   renderEmpList();
   renderIpList();
   renderOfficeState();
 }
 function updateTabsVisibility(){
-  var show = isAdmin(currentEmployee());
+  // Sin alta, nadie ve Historial/Ajustes por el selector: solo el dueño
+  // del celular (si es RH) o RH desbloqueado con PIN desde la pantalla de alta.
+  var show = (!!enrollment && isAdmin(currentEmployee())) || !!unlockedFor;
   document.getElementById("tab-historial").style.display = show ? "" : "none";
   document.getElementById("tab-ajustes").style.display = show ? "" : "none";
   if (!show && (pendingTab === "historial" || pendingTab === "ajustes")) goTab("checar");
@@ -343,6 +397,117 @@ function addEmployee(){
   if(!v) return;
   if(employees.some(function(e){return norm(e)===norm(v);})){ inp.value=""; return; }
   employees.push(v); persistEmployees(); inp.value=""; fillEmployees();
+}
+
+/* ---------- Alta personal ---------- */
+function applyEnrollmentUI(){
+  var enrolled = !!enrollment;
+  var gate = document.getElementById("enrollGate"), main = document.getElementById("checarMain");
+  if (gate) gate.classList.toggle("hidden", enrolled);
+  if (main) main.classList.toggle("hidden", !enrolled);
+  var picker = document.getElementById("empPicker"), fixed = document.getElementById("enrolledAs");
+  if (picker) picker.classList.toggle("hidden", enrolled);
+  if (fixed) fixed.classList.toggle("hidden", !enrolled);
+  if (enrolled){ var n = document.getElementById("enrolledName"); if (n) n.textContent = enrollment.empleado; }
+  updateTabsVisibility();
+}
+function setEnrollStatus(msg, ok){
+  var el = document.getElementById("enrollStatus");
+  if (el){ el.textContent = msg; el.style.color = ok === true ? "var(--green)" : (ok === false ? "var(--red)" : ""); }
+}
+function processAlta(){
+  var params = new URLSearchParams(window.location.search);
+  var token = params.get("alta");
+  if (!token) return;
+  if (enrollment && enrollment.token === token){
+    history.replaceState(null, "", location.pathname);
+    applyEnrollmentUI();
+    return;
+  }
+  setEnrollStatus("Registrando este celular…", null);
+  sheetsPost({key: SHEETS_KEY, action: "usar-enlace", token: token, deviceId: deviceId}).then(function(res){ return res.json(); }).then(function(data){
+    if (data && data.ok && data.empleado){
+      enrollment = {empleado: data.empleado, token: token, deviceId: deviceId};
+      persistEnrollment();
+      history.replaceState(null, "", location.pathname);
+      applyEnrollmentUI();
+      fillEmployees();
+      showToast("✅ Este celular quedó registrado a nombre de " + data.empleado + ".", true);
+    } else if (data && data.error === "usado"){
+      setEnrollStatus("⛔ Este enlace ya se usó en otro celular. Pide uno nuevo a RH.", false);
+    } else if (data && data.error === "token"){
+      setEnrollStatus("⛔ Enlace no válido. Pide uno nuevo a RH.", false);
+    } else {
+      setEnrollStatus("Sin conexión: abre el enlace de nuevo cuando tengas internet.", false);
+    }
+  }).catch(function(){ setEnrollStatus("Sin conexión: abre el enlace de nuevo cuando tengas internet.", false); });
+}
+function openRhGate(){
+  var sel = document.getElementById("rhNameSel");
+  var name = sel ? sel.value : "";
+  if (!name || !isAdmin(name)) return;
+  pendingTab = "ajustes";
+  openPin(name);
+}
+
+/* ---------- Enlaces personales (Ajustes, solo RH) ---------- */
+var linkRows = null; // filas de la hoja "Enlaces" (null = aún no cargadas)
+function linkForEmployee(e){
+  if (!linkRows) return null;
+  for (var i = linkRows.length - 1; i >= 0; i--){ if (norm(linkRows[i].empleado) === norm(e)) return linkRows[i]; }
+  return null;
+}
+function linkIsUsed(row){ return row && (row.usado === true || row.usado === "TRUE" || row.usado === "true"); }
+function renderLinks(){
+  var el = document.getElementById("linkList"); if(!el) return;
+  if (!linkRows){ el.innerHTML = '<p class="small muted">Toca «Actualizar estado» para ver los enlaces.</p>'; return; }
+  el.innerHTML = employees.map(function(e, idx){
+    var row = linkForEmployee(e);
+    var status, linkHtml = "";
+    if (!row){ status = "Sin enlace"; }
+    else if (linkIsUsed(row)){ status = "Usado" + (row.fechaUso ? " · " + new Date(row.fechaUso).toLocaleDateString("es-MX") : ""); }
+    else {
+      status = "Pendiente";
+      var url = APP_URL + "?alta=" + encodeURIComponent(row.token);
+      linkHtml = '<div class="row" style="margin-top:8px"><input readonly value="' + esc(url) + '" style="flex:2;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text)" onclick="this.select()"><button class="btn-out" style="flex:1" onclick="copyLink(' + idx + ')">Copiar</button></div>';
+    }
+    return '<div style="border-bottom:1px solid var(--line);padding:10px 0"><div class="kv" style="border-bottom:none;padding:0"><span>' + esc(e) + '</span><b>' + status + '</b></div>' + linkHtml + '<div style="margin-top:8px"><button class="btn-primary" style="width:auto;padding:8px 16px" onclick="genLink(' + idx + ')">Generar enlace</button></div></div>';
+  }).join("");
+}
+function copyLink(idx){
+  var e = employees[idx]; if (!e) return;
+  var row = linkForEmployee(e); if (!row) return;
+  copyText(APP_URL + "?alta=" + row.token);
+}
+function copyText(t){
+  function done(ok){
+    var el = document.getElementById("linkToast");
+    if (el){ el.textContent = ok ? "✅ Enlace copiado. Compártelo por WhatsApp." : "No se pudo copiar: selecciona el enlace y cópialo manual."; el.className = "toast show " + (ok ? "ok" : "err"); }
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(function(){ done(true); }).catch(function(){ done(false); }); return; }
+  var ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select();
+  var ok = false; try { ok = document.execCommand("copy"); } catch(e){}
+  document.body.removeChild(ta); done(ok);
+}
+function genLink(idx){
+  var e = employees[idx]; if (!e) return;
+  var row = linkForEmployee(e);
+  if (row && !linkIsUsed(row)){
+    if (!confirm("Ya tiene un enlace pendiente. ¿Crear otro? El anterior seguirá sirviendo hasta que se use.")) return;
+  }
+  var token = "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  sheetsPost({key: SHEETS_KEY, action: "crear-enlace", empleado: e, token: token}).then(function(res){ return res.json(); }).then(function(data){
+    var el = document.getElementById("linkToast");
+    if (data && data.ok){ if (el){ el.textContent = "✅ Enlace creado para " + e + ". Cópialo y mándalo por WhatsApp."; el.className = "toast show ok"; } refreshLinks(); }
+    else if (el){ el.textContent = "No se pudo crear el enlace. Revisa tu conexión e inténtalo de nuevo."; el.className = "toast show err"; }
+  }).catch(function(){ var el = document.getElementById("linkToast"); if (el){ el.textContent = "Sin conexión: no se pudo crear el enlace."; el.className = "toast show err"; } });
+}
+function refreshLinks(){
+  fetch(SHEETS_URL + "?key=" + encodeURIComponent(SHEETS_KEY) + "&action=enlaces").then(function(res){ return res.json(); }).then(function(data){
+    if (data && data.ok && data.rows instanceof Array){ linkRows = data.rows; }
+    else { linkRows = null; }
+    renderLinks();
+  }).catch(function(){ linkRows = null; renderLinks(); });
 }
 
 /* ---------- Proverbio del día ---------- */
@@ -648,7 +813,7 @@ function saveRecord(type, st){
 /* ---------- Envío a la hoja central (Google Sheets) ---------- */
 function sendToSheets(rec){
   if (!rec.id) rec.id = "r" + (rec.when ? rec.when.getTime().toString(36) : Date.now().toString(36)) + Math.random().toString(36).slice(2, 8);
-  var payload = {key: SHEETS_KEY, fecha: (rec.when instanceof Date ? rec.when : new Date(rec.when)).toISOString(), empleado: rec.name, tipo: rec.type, enOficina: !!rec.inside, distancia: (rec.dist == null ? null : Math.round(rec.dist)), origen: rec.source || "sin señal", conFoto: !!rec.photo, id: rec.id};
+  var payload = {key: SHEETS_KEY, fecha: (rec.when instanceof Date ? rec.when : new Date(rec.when)).toISOString(), empleado: rec.name, tipo: rec.type, enOficina: !!rec.inside, distancia: (rec.dist == null ? null : Math.round(rec.dist)), origen: rec.source || "sin señal", conFoto: !!rec.photo, id: rec.id, dispositivo: deviceId};
   try {
     fetch(SHEETS_URL, {method: "POST", headers: {"Content-Type": "text/plain"}, body: JSON.stringify(payload)}).then(function(){ rec.synced = true; persistRecordsSafe(); }).catch(function(){ /* sin red: queda pendiente, se reintenta luego */ });
   } catch(e){ /* sin red: queda pendiente */ }
@@ -747,12 +912,13 @@ function downloadCSV(){
   a.download = central ? "checador-equimar-central.csv" : "checador-equimar-respaldo.csv"; a.click();
   setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
 }
-function lockAdmin(){ unlockedFor = null; goTab("checar"); }
+function lockAdmin(){ unlockedFor = null; updateTabsVisibility(); goTab("checar"); }
 
 /* ---------- Tabs + PIN ---------- */
 function goTab(tab){
   // Solo RH puede abrir Historial y Ajustes, aunque se llame directo.
-  if (tab !== "checar" && !isAdmin(currentEmployee())){
+  // RH desbloqueado con PIN desde la pantalla de alta también puede entrar.
+  if (tab !== "checar" && !isAdmin(currentEmployee()) && !unlockedFor){
     tab = "checar";
   }
   pendingTab = tab;
@@ -764,8 +930,8 @@ function goTab(tab){
     retryUnsynced();
     return;
   }
-  var name = currentEmployee();
-  var isAdm = isAdmin(name), unlocked = isAdm && unlockedFor && norm(unlockedFor) === norm(name);
+  var name = unlockedFor || currentEmployee();
+  var isAdm = isAdmin(name), unlocked = isAdm && !!unlockedFor && norm(unlockedFor) === norm(name);
   document.getElementById("view-checar").classList.add("hidden");
   document.getElementById("view-historial").classList.toggle("hidden", tab !== "historial");
   document.getElementById("view-ajustes").classList.toggle("hidden", tab !== "ajustes");
@@ -774,9 +940,11 @@ function goTab(tab){
   document.getElementById("adjLocked").classList.toggle("hidden", unlocked);
   document.getElementById("adjContent").classList.toggle("hidden", !unlocked);
   if (tab === "historial" && unlocked) fetchCentralHistory();
+  if (tab === "ajustes" && unlocked) refreshLinks();
   if (isAdm && !unlocked) openPin(name);
 }
 function openPin(name){
+  pinForName = name;
   var has = !!adminPins[norm(name)];
   document.getElementById("pinSub").textContent = has ? (name + ", escribe tu PIN de RH.") : (name + ", es tu primera vez en este dispositivo: crea tu PIN personal de RH.");
   document.getElementById("pinCreate").classList.toggle("hidden", has);
@@ -786,7 +954,7 @@ function openPin(name){
 }
 function closePin(){ document.getElementById("pinModal").classList.remove("show"); if(!unlockedFor) goTab("checar"); }
 function submitPin(){
-  var name = currentEmployee(), key = norm(name), err = document.getElementById("pinErr");
+  var name = pinForName || currentEmployee(), key = norm(name), err = document.getElementById("pinErr");
   if (!adminPins[key]){
     var pin = document.getElementById("newPin").value.trim();
     if (!/^\d{4,6}$/.test(pin)){ err.textContent = "El PIN debe tener de 4 a 6 dígitos."; return; }
@@ -797,6 +965,7 @@ function submitPin(){
   }
   unlockedFor = name;
   document.getElementById("pinModal").classList.remove("show");
+  updateTabsVisibility();
   goTab(pendingTab);
 }
 
@@ -815,6 +984,8 @@ function saveOfficePoint(){
 }
 
 fillEmployees();
+applyEnrollmentUI();
+processAlta();
 renderHistory();
 updateStatus();
 startGpsCheck(false);
