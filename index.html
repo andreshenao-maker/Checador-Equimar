@@ -277,6 +277,7 @@ var fallbackReady = false; // tras ~20 s sin GPS se habilita registro con foto
 var gpsStartedAt = 0, gpsTick = null, gpsElapsedTimer = null;
 var pendingType = null, photoDataUrl = null;
 var officeIPs = []; // IPs públicas de la oficina guardadas (la IP cambia) — solo respaldo, nunca bloquea
+var removedOfficeIps = []; // IPs quitadas a mano en Ajustes: no resucitarlas en la unión de pushCentralConfig
 var currentIP = null;
 
 /* ---------- Historial central (Google Sheets, solo RH) ---------- */
@@ -372,11 +373,25 @@ function applyCentralConfig(cfg){
 function pushCentralConfig(){
   // Sube la config actual (punto + IPs + roles RH) a la hoja. Si el punto
   // local no existe, se conserva el central ya conocido para no borrarlo.
+  // Las IPs se unen con las centrales ya conocidas antes de subirlas, para
+  // que un celular que aprendió una IP nueva no borre la que otro celular
+  // subió primero; la lista se limita a las 10 más recientes.
   function doPush(){
     var lat = "", lon = "", savedAt = "";
     if (office){ lat = String(office.lat); lon = String(office.lon); savedAt = office.savedAt || ""; }
     else if (centralConfig){ lat = centralConfig.officeLat || ""; lon = centralConfig.officeLon || ""; savedAt = centralConfig.officeSavedAt || ""; }
-    var payload = {key: SHEETS_KEY, action: "save-config", officeLat: lat, officeLon: lon, officeSavedAt: savedAt, officeIps: officeIPs.join(","), rhNames: getRhList().join(",")};
+    var merged = [];
+    if (centralConfig){
+      String(centralConfig.officeIps || "").split(",").map(function(s){ return s.trim(); }).filter(function(s){ return s; }).forEach(function(ip){
+        if (merged.indexOf(ip) < 0 && removedOfficeIps.indexOf(ip) < 0) merged.push(ip);
+      });
+    }
+    officeIPs.forEach(function(ip){ if (merged.indexOf(ip) < 0) merged.push(ip); });
+    if (merged.length > 10) merged = merged.slice(-10);
+    officeIPs = merged;
+    persistIPs();
+    if (centralConfig) centralConfig.officeIps = merged.join(",");
+    var payload = {key: SHEETS_KEY, action: "save-config", officeLat: lat, officeLon: lon, officeSavedAt: savedAt, officeIps: merged.join(","), rhNames: getRhList().join(",")};
     try { fetch(SHEETS_URL, {method: "POST", headers: {"Content-Type": "text/plain"}, body: JSON.stringify(payload)}).catch(function(){}); } catch(e){}
   }
   if (centralConfigLoaded || office){ doPush(); return; }
@@ -451,14 +466,16 @@ function renderOfficeState(){
 }
 restorePersisted();
 var ipInOffice = false;
+var insideVia = null; // cómo se decidió el último "dentro": "wifi-ip" | "gps" | "gps-150" | null
 var autoRetries = 0, autoRetryTimer = null; // reintentos automáticos de GPS, máx 5
 function locSource(){
+  if (insideVia) return insideVia;
   if (ipInOffice) return "wifi-ip";
   if (pos) return pos.source || "gps";
   return "sin señal";
 }
 function locSourceLabel(src){
-  return {"gps":"GPS","wifi-red":"WiFi/red","wifi-ip":"WiFi/IP","sin señal":"Sin señal"}[src] || src;
+  return {"gps":"GPS","gps-150":"GPS (150 m)","wifi-red":"WiFi/red","wifi-ip":"WiFi/IP","sin señal":"Sin señal"}[src] || src;
 }
 
 function norm(s){ return (s||"").trim().toLowerCase(); }
@@ -854,10 +871,20 @@ function updateStatus(){
   var dist = distanceToOffice();
   var inside = false, needPhoto = false;
   var pTitle = document.getElementById("photoTitle"), pReason = document.getElementById("photoReason");
-  if (ipInOffice){ inside = true; pill.textContent = "✅ En oficina"; pill.className = "pill in"; setGpsCard("", "", "En oficina por WiFi/IP", false); }
-  else if (pos && office && pos.acc <= MAX_ACC && dist <= RADIUS){ inside = true; pill.textContent = "✅ En oficina"; pill.className = "pill in"; learnOfficeIpFromGps(); }
-  else if (pos && office && pos.acc > MAX_ACC){ needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill out"; pTitle.textContent = "No se confirmó que estés dentro de la oficina: tu foto hace el registro"; pReason.textContent = "Tu precisión es de ±" + Math.round(pos.acc) + " m y se aceptan ±50 m para registrar sin foto. Con la pura foto queda registrado, sin revisión de RH."; }
-  else if (pos && office){ needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill out"; pTitle.textContent = "Estás fuera de la oficina: se necesita tu foto para registrar"; pReason.textContent = "Sin revisión de RH: con la pura foto queda registrado, marcado como fuera, a " + fmt(dist) + " de la oficina, con la hora."; }
+  insideVia = null;
+  // Decisión de dentro/fuera, en este orden, SIEMPRE:
+  // 1) WiFi/IP primero: si la IP actual coincide con una IP de oficina, es
+  //    en oficina de inmediato, sin esperar al GPS ni importar su distancia
+  //    o precisión. El GPS a 150 m solo sirve para aprender la IP, nunca
+  //    para decidir que alguien está dentro.
+  if (ipInOffice){ inside = true; insideVia = "wifi-ip"; pill.textContent = "✅ En oficina"; pill.className = "pill in"; setGpsCard("", "", "En oficina por WiFi/IP", false); }
+  // 2) GPS estricto: dist <= 50 m y acc <= 50 m.
+  else if (pos && office && pos.acc <= MAX_ACC && dist <= RADIUS){ inside = true; insideVia = "gps"; pill.textContent = "✅ En oficina"; pill.className = "pill in"; learnOfficeIpFromProximity(); }
+  // 3) Respaldo GPS a 150 m (solo si no hubo IP-match): dist <= 150 m y
+  //    acc <= 150 m. Cubre el GPS impreciso adentro del edificio (~111 m).
+  else if (pos && office && dist <= 150 && pos.acc <= 150){ inside = true; insideVia = "gps-150"; pill.textContent = "✅ En oficina"; pill.className = "pill in"; setGpsCard("", "", "En oficina por GPS (respaldo de 150 m)", false); learnOfficeIpFromProximity(); }
+  else if (pos && office && pos.acc > MAX_ACC){ learnOfficeIpFromProximity(); needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill out"; pTitle.textContent = "No se confirmó que estés dentro de la oficina: tu foto hace el registro"; pReason.textContent = "Tu precisión es de ±" + Math.round(pos.acc) + " m y se aceptan ±50 m para registrar sin foto. Con la pura foto queda registrado, sin revisión de RH."; }
+  else if (pos && office){ learnOfficeIpFromProximity(); needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill out"; pTitle.textContent = "Estás fuera de la oficina: se necesita tu foto para registrar"; pReason.textContent = "Sin revisión de RH: con la pura foto queda registrado, marcado como fuera, a " + fmt(dist) + " de la oficina, con la hora."; }
   else if (pos && !office){ needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill out"; pTitle.textContent = "Todavía no se puede saber si estás dentro o fuera: se necesita tu foto"; pReason.textContent = "El punto de la oficina aún no está fijado (lo hace RH en Ajustes, parado en la puerta). Mientras tanto, el registro es con foto."; }
   else if (fallbackReady){ needPhoto = true; pill.textContent = "Fuera de oficina"; pill.className = "pill bad"; pTitle.textContent = "No se pudo determinar tu ubicación: se necesita tu foto"; pReason.textContent = "Sin GPS no se puede saber si estás dentro o fuera del radio de 50 m. Con la pura foto queda registrado, marcado como ubicación no determinada, con la hora."; }
   else { pill.textContent = "Verificando ubicación…"; pill.className = "pill mid"; }
@@ -880,21 +907,44 @@ function updateStatus(){
   return {inside: inside, needPhoto: needPhoto, dist: dist};
 }
 /* ---------- Línea de IP en Checar + auto-aprendizaje de la IP de oficina ---------- */
-/* La IP pública de la oficina rota (Infinitum/Totalplay). Cuando el GPS
-   confirma que el celular está dentro de la oficina, la IP actual de ese
-   celular ES una IP de oficina: se guarda sola (local + hoja central) para
-   que los demás celulares la hereden sin que RH tenga que hacer nada. */
+/* La IP pública de la oficina rota (Infinitum/Totalplay). El GPS adentro del
+   edificio marca ~111 m (no llega a los 50 m), así que aprender la IP solo
+   con GPS-estricto casi nunca dispara. Por eso se aprende por cercanía +
+   WiFi: si el celular está cerca del punto con precisión razonable y está
+   en WiFi, su IP pública ES una IP de la oficina: se guarda sola (local +
+   hoja central) para que los demás celulares la hereden sin que RH tenga
+   que hacer nada. Aprender NUNCA cambia la decisión dentro/fuera: dentro
+   sigue siendo GPS <= 50 m / ±50 m, o coincidencia de IP. */
+function getConnectionType(){
+  try {
+    var c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!c) return null;
+    return c.type || null; // 'wifi' | 'cellular' | 'ethernet' | ... ; null = desconocido
+  } catch(e){ return null; }
+}
 function renderIpLine(){
   var el = document.getElementById("ipLine"); if (!el) return;
   if (!currentIP){ el.textContent = "Tu IP: detectando…"; return; }
   el.textContent = "Tu IP: " + currentIP + " · IP de oficina: " + (officeIPs.indexOf(currentIP) >= 0 ? "sí ✅" : "no");
 }
-function learnOfficeIpFromGps(){
-  // Solo se llama desde la rama GPS-dentro de updateStatus(): nunca desde
-  // wifi-red, wifi-ip ni sin señal, y nunca sin GPS ni sin punto.
+function learnOfficeIpFromProximity(){
+  // Solo se llama desde las ramas con GPS + punto de updateStatus(): nunca
+  // desde wifi-ip, nunca sin GPS ni sin punto. La decisión dentro/fuera no
+  // depende de esta función.
+  if (!pos || !office) return;
   if (!currentIP) return;
   if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(currentIP)) return;
   if (officeIPs.indexOf(currentIP) >= 0) return; // ya conocida: no duplicar
+  var dist = distanceToOffice();
+  if (dist == null) return;
+  var ct = getConnectionType();
+  var ok = false;
+  if (ct === "wifi"){ ok = dist <= 150 && pos.acc <= 150; }
+  else if (!ct){ ok = dist <= 150 && pos.acc <= 100; } // tipo desconocido: más estricto
+  else { ok = false; } // cellular u otro tipo conocido: nunca aprender
+  if (!ok) return;
+  var ri = removedOfficeIps.indexOf(currentIP);
+  if (ri >= 0) removedOfficeIps.splice(ri, 1); // si se quitó a mano y vuelve a aparecer, vale de nuevo
   officeIPs.push(currentIP);
   persistIPs();
   pushCentralConfig(); // la IP nueva llega a la hoja para todos los celulares
@@ -904,6 +954,12 @@ function learnOfficeIpFromGps(){
 /* ---------- IP pública: respaldo por WiFi, nunca bloquea ---------- */
 async function fetchIP(timeoutMs){
   var ms = timeoutMs || 5000;
+  // Foto de las IPs conocidas AL EMPEZAR: una IP aprendida por proximidad
+  // durante esta misma revisión (p. ej. el GPS a 150 m que aprende la IP
+  // del WiFi cercano) no decide este registro; el aprendizaje a 150 m es
+  // solo para cambiar la IP, nunca para decidir dentro/fuera. La IP
+  // aprendida sí vale en la siguiente revisión (ya está en la lista).
+  var knownIps = officeIPs.slice();
   try {
     var ctrl = new AbortController();
     var to = setTimeout(function(){ ctrl.abort(); }, ms);
@@ -912,13 +968,16 @@ async function fetchIP(timeoutMs){
     if (!r.ok){ renderIpLine(); return; }
     var j = await r.json();
     if (!j || !j.ip){ renderIpLine(); return; }
+    var wasInOffice = ipInOffice;
     currentIP = j.ip;
-    ipInOffice = officeIPs.indexOf(currentIP) >= 0;
+    ipInOffice = knownIps.indexOf(currentIP) >= 0;
     var el = document.getElementById("ipCurrent");
     if (el) el.textContent = currentIP + (ipInOffice ? " · coincide con la IP de oficina ✅" : "");
     renderIpList();
     renderIpLine();
-    if (ipInOffice) updateStatus();
+    // WiFi primero: si el IP-match cambió (llegó o se perdió), la pantalla
+    // lo refleja de inmediato, sin esperar al GPS.
+    if (ipInOffice !== wasInOffice) updateStatus();
   } catch(e){ var ipl = document.getElementById("ipLine"); if (ipl && !currentIP) ipl.textContent = "Tu IP: no se pudo detectar"; /* sin internet o ipify no responde: se ignora en silencio, el GPS manda */ }
 }
 function renderIpList(){
@@ -931,6 +990,8 @@ function renderIpList(){
 function saveCurrentIP(){
   var t = document.getElementById("ipToast");
   if (!currentIP){ fetchIP(); if (t){ t.textContent = "Todavía no se detectó tu IP, espera unos segundos y vuelve a intentar."; t.className = "toast show err"; } return; }
+  var ri = removedOfficeIps.indexOf(currentIP);
+  if (ri >= 0) removedOfficeIps.splice(ri, 1); // si se quitó a mano y se vuelve a guardar, vale de nuevo
   if (officeIPs.indexOf(currentIP) < 0) officeIPs.push(currentIP);
   persistIPs();
   pushCentralConfig();
@@ -941,7 +1002,14 @@ function saveCurrentIP(){
   if (el) el.textContent = currentIP + " · coincide con la IP de oficina ✅";
 }
 function removeIp(i){
+  var removed = officeIPs[i];
   officeIPs.splice(i, 1);
+  if (removed){
+    if (removedOfficeIps.indexOf(removed) < 0) removedOfficeIps.push(removed);
+    // Que la unión de pushCentralConfig() no resucite la IP quitada: la
+    // lista central conocida se actualiza ANTES de subir la config.
+    if (centralConfig) centralConfig.officeIps = officeIPs.join(",");
+  }
   persistIPs();
   pushCentralConfig();
   ipInOffice = currentIP ? officeIPs.indexOf(currentIP) >= 0 : false;
@@ -1056,6 +1124,13 @@ function showToast(msg, ok){
   var t = document.getElementById("toast"); t.textContent = msg; t.className = "toast show " + (ok ? "ok" : "err");
   setTimeout(function(){ t.classList.remove("show"); }, 6000);
 }
+function insideToastText(type){
+  var when = new Date().toLocaleTimeString("es-MX",{hour12:false});
+  var via = insideVia || (ipInOffice ? "wifi-ip" : "gps");
+  if (via === "wifi-ip") return "✅ " + type + " registrada en oficina por WiFi/IP — " + currentEmployee() + ", " + when + ". Sin foto.";
+  if (via === "gps-150") return "✅ " + type + " registrada en oficina por GPS (respaldo de 150 m) — " + currentEmployee() + ", " + when + ". Sin foto.";
+  return "✅ " + type + " registrada en oficina — " + currentEmployee() + ", " + when + ". Sin foto, dentro del radio de 50 m.";
+}
 function saveRecord(type, st){
   var now = new Date();
   var rec = {
@@ -1120,7 +1195,7 @@ async function tryRegister(type){
   try {
     await refreshBeforeRegister(type === "Entrada" ? "btnIn" : "btnOut");
     var st = updateStatus();
-    if (st.inside){ saveRecord(type, st); resetPhoto(); updateStatus(); showToast("✅ " + type + " registrada en oficina — " + currentEmployee() + ", " + new Date().toLocaleTimeString("es-MX",{hour12:false}) + ". Sin foto, dentro del radio de 50 m.", true); return; }
+    if (st.inside){ saveRecord(type, st); resetPhoto(); updateStatus(); showToast(insideToastText(type), true); return; }
     if (!photoDataUrl){ showToast("Estás fuera de la oficina (o sin señal GPS): primero toma tu foto arriba para poder registrar.", false); document.getElementById("photoBox").scrollIntoView({behavior:"smooth"}); return; }
     pendingType = type; doConfirmPhotoRegister();
   } finally { registering = false; }
@@ -1128,6 +1203,10 @@ async function tryRegister(type){
 function doConfirmPhotoRegister(){
   var type = pendingType || "Entrada";
   var st = updateStatus();
+  // WiFi primero también aquí: si tras el refresh la IP ya coincide (o el
+  // GPS de respaldo aplica), el registro es en oficina sin foto, aunque ya
+  // se haya tomado una. La foto se descarta.
+  if (st.inside){ resetPhoto(); saveRecord(type, st); updateStatus(); showToast(insideToastText(type), true); return; }
   if (!photoDataUrl){ showToast("Falta tu foto para registrar fuera de la oficina.", false); return; }
   saveRecord(type, st);
   var why = !pos ? "sin señal GPS" : (!office ? "oficina aún no configurada" : (pos.acc > MAX_ACC ? "precisión de ±" + Math.round(pos.acc) + " m" : "a " + fmt(st.dist) + " de la oficina"));
@@ -1216,6 +1295,7 @@ function goTab(tab){
     document.getElementById("view-historial").classList.add("hidden");
     document.getElementById("view-ajustes").classList.add("hidden");
     fetchCentralConfig();
+    fetchIP(); // WiFi primero: al entrar a Checar se vuelve a revisar la IP, sin esperar al GPS
     retryUnsynced();
     return;
   }
