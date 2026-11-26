@@ -39,7 +39,14 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .card h2{margin:0 0 8px;font-size:1.15rem}
 .card h2.warn{color:#d97706}.card h2.err{color:var(--red)}.card h2.ok{color:var(--green)}
 .muted{color:var(--muted)} .small{font-size:.9rem}
-.proverb{font-style:italic;color:var(--muted);font-size:.95rem;margin:0 0 8px;text-align:center}
+.proverb{font-style:italic;color:var(--muted);font-size:1.4rem;font-weight:700;line-height:1.3;margin:0 0 8px;text-align:center}
+.today{margin-top:14px;border-top:1px solid var(--line);padding-top:12px;text-align:left}
+.today h3{margin:0 0 6px;font-size:1rem}
+.today-row{display:flex;justify-content:space-between;gap:12px;padding:8px 2px;border-bottom:1px solid var(--line);font-size:.95rem}
+.today-row:last-child{border-bottom:none}
+.today-row .done{font-weight:700}
+.today-row .pend{color:var(--muted)}
+#scheduleLine{margin:10px 0 0;font-weight:700}
 .btn-primary{background:var(--brand);color:#fff;width:100%}
 .btn-green{background:var(--green);color:#fff;flex:1;font-size:1.1rem;padding:16px}
 .btn-out{background:var(--surface2);color:var(--text);border-color:var(--line);flex:1;font-size:1.1rem;padding:16px}
@@ -108,6 +115,11 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
       <div class="clock" id="clock">--:--:--</div>
       <div class="date" id="dateLine">—</div>
       <div style="text-align:center;margin-top:12px"><span class="pill mid" id="statusPill">Verificando ubicación…</span></div>
+      <div class="today" id="todayCard">
+        <h3>Mis registros de hoy</h3>
+        <div id="todayRows"></div>
+        <p class="small" id="scheduleLine" style="margin:10px 0 0;display:none"></p>
+      </div>
       <p class="small muted" id="gpsLine" style="text-align:center;margin:10px 0 0">Verificando ubicación…</p>
       <p class="small muted" id="ipLine" style="text-align:center;margin:6px 0 0">Tu IP: detectando…</p>
       <div id="gpsSteps" class="hidden" style="text-align:left">
@@ -259,6 +271,12 @@ label.flabel{font-weight:700;font-size:.9rem;display:block;margin-top:8px}
 
 <script>
 var RADIUS = 50, MAX_ACC = 50;
+var DAY_SLOTS = [ // pasos de la jornada (v1.11)
+  {label: "Entrada", sub: "mañana"},
+  {label: "Salida comida", sub: "2:00 PM"},
+  {label: "Entrada", sub: "3:00 PM"},
+  {label: "Salida final", sub: "6:00 PM"}
+];
 var ADMINS = ["keiji andres henao bayon","norma mariscal","mara henao"];
 var rhList = null; // lista RH central (de la hoja); null = usar ADMINS
 var centralConfig = null; // última config central leída (cadenas)
@@ -845,6 +863,7 @@ function tickClock(){
   document.getElementById("clock").textContent = d.toLocaleTimeString("es-MX",{hour12:false});
   document.getElementById("dateLine").textContent = d.toLocaleDateString("es-MX",{weekday:"long", day:"numeric", month:"long", year:"numeric"});
   renderProverb();
+  if (d.getSeconds() === 0) updateStatus(); // el horario desbloquea solo al llegar la hora (2, 3 o 6 PM)
 }
 setInterval(tickClock, 1000); tickClock();
 
@@ -865,6 +884,67 @@ function setGpsCard(title, cls, msg, showSteps){
   if (line) line.textContent = msg || title;
   var steps = document.getElementById("gpsSteps");
   if (steps) steps.classList.toggle("hidden", !showSteps);
+}
+/* ---------- Registros de hoy + horario del día (v1.11) ---------- */
+/* La jornada tiene 4 pasos: Entrada en la mañana, Salida de comida a las
+   2:00 PM, Entrada a las 3:00 PM y Salida final a las 6:00 PM. La tarjeta
+   "Mis registros de hoy" solo muestra los registros de HOY del empleado
+   de este celular (por fecha local); nada de días anteriores se acumula,
+   cada día empieza de cero. El horario se aplica con los registros
+   LOCALES del celular, sin llamadas al servidor. */
+function todayRecords(){
+  var me = currentEmployee();
+  var now = new Date();
+  return records.filter(function(r){
+    return r && r.name === me && r.when instanceof Date && !isNaN(r.when.getTime()) &&
+      r.when.getFullYear() === now.getFullYear() &&
+      r.when.getMonth() === now.getMonth() &&
+      r.when.getDate() === now.getDate();
+  }).sort(function(a, b){ return a.when - b.when; });
+}
+function fmtTime(d){ return d.toLocaleTimeString("es-MX", {hour: "2-digit", minute: "2-digit", hour12: false}); }
+function scheduleGate(now){
+  now = now || new Date();
+  var n = todayRecords().length;
+  // Umbrales por paso: tras el registro n, el siguiente solo desde esta hora.
+  var nextHour = [null, 14, 15, 18]; // n=1 → 2 PM, n=2 → 3 PM, n=3 → 6 PM
+  var nextLabel = [null, "salida de comida a las 2:00 PM", "entrada a las 3:00 PM", "salida final a las 6:00 PM"];
+  if (n === 0) return {allowedIn: true, allowedOut: false, done: false, blockMsg: ""};
+  if (n >= 4) return {allowedIn: false, allowedOut: false, done: true, blockMsg: "Jornada completa: ya registraste tus 4 registros de hoy."};
+  var nextType = (n % 2 === 0) ? "Entrada" : "Salida"; // n=1 → Salida, n=2 → Entrada, n=3 → Salida
+  var open = now.getHours() >= nextHour[n];
+  return {
+    allowedIn: open && nextType === "Entrada",
+    allowedOut: open && nextType === "Salida",
+    done: false,
+    blockMsg: open ? "" : ("Próximo registro: " + nextLabel[n] + ".")
+  };
+}
+function renderTodayCard(){
+  var rowsEl = document.getElementById("todayRows");
+  if (!rowsEl) return;
+  var recs = todayRecords();
+  var html = "";
+  for (var i = 0; i < DAY_SLOTS.length; i++){
+    var slot = DAY_SLOTS[i];
+    var r = recs[i];
+    if (r){
+      html += '<div class="today-row"><span><b>' + esc(slot.label) + '</b> <span class="muted">· ' + esc(slot.sub) + '</span></span><span class="done">' + esc(fmtTime(r.when)) + ' · ' + (r.inside ? "En oficina" : "Fuera") + '</span></div>';
+    } else {
+      html += '<div class="today-row"><span><b>' + esc(slot.label) + '</b> <span class="muted">· ' + esc(slot.sub) + '</span></span><span class="pend">Pendiente</span></div>';
+    }
+  }
+  for (var j = DAY_SLOTS.length; j < recs.length; j++){
+    var x = recs[j];
+    html += '<div class="today-row"><span><b>' + esc(x.type) + '</b></span><span class="done">' + esc(fmtTime(x.when)) + ' · ' + (x.inside ? "En oficina" : "Fuera") + '</span></div>';
+  }
+  rowsEl.innerHTML = html;
+  var line = document.getElementById("scheduleLine");
+  if (line){
+    var gate = scheduleGate();
+    line.textContent = gate.blockMsg;
+    line.style.display = gate.blockMsg ? "" : "none";
+  }
 }
 function updateStatus(){
   var pill = document.getElementById("statusPill");
@@ -904,6 +984,13 @@ function updateStatus(){
     document.getElementById("btnOut").textContent = "Registrar salida";
     document.getElementById("btnConfirmPhoto").classList.toggle("hidden", !(needPhoto && photoDataUrl));
   }
+  // Horario del día (v1.11): los botones solo permiten el paso que toca
+  // según los registros de hoy y la hora local. Nunca habilita un botón
+  // que la ubicación/foto ya tenía bloqueado, solo puede bloquear más.
+  var gate = scheduleGate();
+  document.getElementById("btnIn").disabled = document.getElementById("btnIn").disabled || !gate.allowedIn;
+  document.getElementById("btnOut").disabled = document.getElementById("btnOut").disabled || !gate.allowedOut;
+  renderTodayCard();
   return {inside: inside, needPhoto: needPhoto, dist: dist};
 }
 /* ---------- Línea de IP en Checar + auto-aprendizaje de la IP de oficina ---------- */
@@ -1191,6 +1278,12 @@ function refreshBeforeRegister(btnId){
 }
 async function tryRegister(type){
   if (registering) return;
+  var gate0 = scheduleGate();
+  if ((type === "Entrada" && !gate0.allowedIn) || (type === "Salida" && !gate0.allowedOut)){
+    showToast(gate0.blockMsg || "Este registro todavía no está disponible según el horario del día.", false);
+    updateStatus();
+    return;
+  }
   registering = true;
   try {
     await refreshBeforeRegister(type === "Entrada" ? "btnIn" : "btnOut");
@@ -1202,6 +1295,12 @@ async function tryRegister(type){
 }
 function doConfirmPhotoRegister(){
   var type = pendingType || "Entrada";
+  var gate0 = scheduleGate();
+  if ((type === "Entrada" && !gate0.allowedIn) || (type === "Salida" && !gate0.allowedOut)){
+    showToast(gate0.blockMsg || "Este registro todavía no está disponible según el horario del día.", false);
+    updateStatus();
+    return;
+  }
   var st = updateStatus();
   // WiFi primero también aquí: si tras el refresh la IP ya coincide (o el
   // GPS de respaldo aplica), el registro es en oficina sin foto, aunque ya
@@ -1215,6 +1314,12 @@ function doConfirmPhotoRegister(){
 }
 async function confirmPhotoRegister(){
   if (registering) return;
+  var gate0 = scheduleGate();
+  if (!gate0.allowedIn && !gate0.allowedOut){
+    showToast(gate0.blockMsg || "Este registro todavía no está disponible según el horario del día.", false);
+    updateStatus();
+    return;
+  }
   registering = true;
   try { await refreshBeforeRegister("btnConfirmPhoto"); doConfirmPhotoRegister(); }
   finally { registering = false; }
